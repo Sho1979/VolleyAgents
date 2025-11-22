@@ -1,0 +1,233 @@
+[
+  {
+    "id": 1,
+    "serve_team": "Millennium",
+    "receive_team": "Bienno",
+    "serve_time_str": "17:00",
+    "point_time_str": "17:06",
+    "winner_team": "Millennium",
+    "score_after_str": "5-2",
+    "notes": "Errore Bienno in ricezione"
+  },
+  {
+    "id": 2,
+    "serve_team": "Millennium",
+    "receive_team": "Bienno",
+    "serve_time_str": "17:21",
+    "point_time_str": "17:26",
+    "winner_team": "Millennium",
+    "score_after_str": null,
+    "notes": "Contrattacco Bienno out"
+  },
+  {
+    "id": 3,
+    "serve_team": "Millennium",
+    "receive_team": "Bienno",
+    "serve_time_str": "17:47",
+    "point_time_str": "17:57",
+    "winner_team": "Millennium",
+    "score_after_str": "7-2",
+    "notes": "Rally con scambio, punto Millennium"
+  },
+  {
+    "id": 4,
+    "serve_team": "Millennium",
+    "receive_team": "Bienno",
+    "serve_time_str": "18:55",
+    "point_time_str": "19:06",
+    "winner_team": "Millennium",
+    "score_after_str": "8-2",
+    "notes": "Muro-out Millennium"
+  },
+  {
+    "id": 5,
+    "serve_team": "Millennium",
+    "receive_team": "Bienno",
+    "serve_time_str": "19:24",
+    "point_time_str": "19:42",
+    "winner_team": "Bienno",
+    "score_after_str": null,
+    "notes": "Scambio lungo, palla a Bienno"
+  },
+  {
+    "id": 6,
+    "serve_team": "Bienno",
+    "receive_team": "Millennium",
+    "serve_time_str": "19:57",
+    "point_time_str": "20:12",
+    "winner_team": "Bienno",
+    "score_after_str": null,
+    "notes": "Attacco Millennium non passa, 4 tocchi"
+  },
+  {
+    "id": 7,
+    "serve_team": "Bienno",
+    "receive_team": "Millennium",
+    "serve_time_str": "20:28",
+    "point_time_str": "20:33",
+    "winner_team": "Millennium",
+    "score_after_str": "9-4",
+    "notes": "Ricezione e attacco punto Millennium"
+  },
+  {
+    "id": 8,
+    "serve_team": "Millennium",
+    "receive_team": "Bienno",
+    "serve_time_str": "20:51",
+    "point_time_str": "20:51",
+    "winner_team": "Bienno",
+    "score_after_str": null,
+    "notes": "Servizio Millennium direttamente in rete"
+  },
+  {
+    "id": 9,
+    "serve_team": "Bienno",
+    "receive_team": "Millennium",
+    "serve_time_str": "21:08",
+    "point_time_str": "21:08",
+    "winner_team": "Millennium",
+    "score_after_str": null,
+    "notes": "Servizio Bienno direttamente in rete"
+  },
+  {
+    "id": 10,
+    "serve_team": "Millennium",
+    "receive_team": "Bienno",
+    "serve_time_str": "21:26",
+    "point_time_str": "21:26",
+    "winner_team": "Millennium",
+    "score_after_str": "11-5",
+    "notes": "Ace Millennium"
+  },
+  {
+    "id": 11,
+    "serve_team": "Millennium",
+    "receive_team": "Bienno",
+    "serve_time_str": "21:43",
+    "point_time_str": "21:49",
+    "winner_team": "Bienno",
+    "score_after_str": "11-6",
+    "notes": "Prima chiamato out Bienno, poi tocco Millennium: punto Bienno"
+  },
+  {
+    "id": 12,
+    "serve_team": "Bienno",
+    "receive_team": "Millennium",
+    "serve_time_str": "22:09",
+    "point_time_str": "22:19",
+    "winner_team": "Millennium",
+    "score_after_str": "12-6",
+    "notes": "Contrattacco Bienno out"
+  },
+  {
+    "id": 13,
+    "serve_team": "Millennium",
+    "receive_team": "Bienno",
+    "serve_time_str": "22:38",
+    "point_time_str": "22:46",
+    "winner_team": "Bienno",
+    "score_after_str": "12-7",
+    "notes": "Ottima ricezione Bienno, contrattacco a punto (tempo punto stimato ~22:46)"
+  },
+  {
+    "id": 14,
+    "serve_team": "Bienno",
+    "receive_team": "Millennium",
+    "serve_time_str": "23:04",
+    "point_time_str": "23:04",
+    "winner_team": "Bienno",
+    "score_after_str": "12-8",
+    "notes": "Ace Bienno"
+  },
+  {
+    "id": 15,
+    "serve_team": "Bienno",
+    "receive_team": "Millennium",
+    "serve_time_str": "23:24",
+    "point_time_str": "23:38",
+    "winner_team": "Bienno",
+    "score_after_str": "12-9",
+    "notes": "Contrattacco Millennium out"
+  },
+  {
+    "id": 16,
+    "serve_team": "Bienno",
+    "receive_team": "Millennium",
+    "serve_time_str": "23:53",
+    "point_time_str": "24:06",
+    "winner_team": "Millennium",
+    "score_after_str": "13-9",
+    "notes": "Grande attacco del centrale Millennium"
+  },
+  {
+    "id": 17,
+    "serve_team": "Millennium",
+    "receive_team": "Bienno",
+    "serve_time_str": "24:26",
+    "point_time_str": "24:32",
+    "winner_team": "Bienno",
+    "score_after_str": "13-10",
+    "notes": "Contrattacco Millennium out (tempo punto stimato ~24:32)"
+  },
+  {
+    "id": 18,
+    "serve_team": "Bienno",
+    "receive_team": "Millennium",
+    "serve_time_str": "24:57",
+    "point_time_str": "24:57",
+    "winner_team": "Millennium",
+    "score_after_str": "14-10",
+    "notes": "Servizio Bienno direttamente in rete"
+  },
+  {
+    "id": 19,
+    "serve_team": "Millennium",
+    "receive_team": "Bienno",
+    "serve_time_str": "25:14",
+    "point_time_str": "25:25",
+    "winner_team": "Millennium",
+    "score_after_str": "15-10",
+    "notes": "Contrasto a rete, invasione Bienno"
+  },
+  {
+    "id": 20,
+    "serve_team": "Millennium",
+    "receive_team": "Bienno",
+    "serve_time_str": "25:41",
+    "point_time_str": "25:41",
+    "winner_team": "Millennium",
+    "score_after_str": "16-10",
+    "notes": "Ace Millennium"
+  },
+  {
+    "id": 21,
+    "serve_team": "Millennium",
+    "receive_team": "Bienno",
+    "serve_time_str": "26:02",
+    "point_time_str": "26:07",
+    "winner_team": "Bienno",
+    "score_after_str": "16-11",
+    "notes": "Contrattacco Bienno a punto"
+  },
+  {
+    "id": 22,
+    "serve_team": "Bienno",
+    "receive_team": "Millennium",
+    "serve_time_str": "26:24",
+    "point_time_str": "26:35",
+    "winner_team": "Bienno",
+    "score_after_str": "16-12",
+    "notes": "Attacco Bienno a punto"
+  },
+  {
+    "id": 23,
+    "serve_team": "Bienno",
+    "receive_team": "Millennium",
+    "serve_time_str": "26:54",
+    "point_time_str": "26:54",
+    "winner_team": "Bienno",
+    "score_after_str": "16-13",
+    "notes": "Ace Bienno, punteggio finale segmento"
+  }
+]
+
