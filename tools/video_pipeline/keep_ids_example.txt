@@ -1,0 +1,11 @@
+# Esempio di file keep_ids.txt
+# Un numero per riga (1-based, come appaiono nella lista dei rally)
+# Le righe che iniziano con # sono commenti e vengono ignorate
+# 
+# Esempio: se vuoi mantenere solo i rally 1, 3, 5, 7, 10:
+1
+3
+5
+7
+10
+

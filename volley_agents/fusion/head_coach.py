@@ -25,6 +25,32 @@ class HeadCoachConfig:
 
 
 class HeadCoach:
+    """
+    HeadCoach - Sistema di fusione e validazione rally per VolleyAgents
+    
+    TEST DI REGRESSIONE:
+    ====================
+    ⚠️ IMPORTANTE: Ogni modifica a HeadCoach deve passare il test di regressione:
+    
+    python -m tools.video_pipeline.eval_rallies_gt \
+      --gt tools/video_pipeline/ground_truth/gt_millennium_16m50_26m54_verified.json \
+      --pred tools/video_pipeline/ground_truth/rallies_1010_1600.json \
+      --iou 0.5
+    
+    Risultati attesi: Precision=1.000, Recall=1.000, 19/19 match
+    Vedi README_dev.md per dettagli completi e versioni alternative del comando.
+    
+    REGOLE ATTIVE:
+    ==============
+    - Serve obbligatoria: ogni rally deve contenere SERVE_START
+    - Durata minima: 0.3s (permette ACE/errori servizio)
+    - Durata massima: 45.0s
+    - Gap minimo: 1.0s tra rally consecutivi
+    - Validazione attività palla: rally > 0.5s devono avere azioni palla
+    
+    ⚠️ Questa configurazione è quella validata dal test di regressione principale (19/19 rally corretti).
+    Se modifichi queste regole, esegui sempre il test prima di fare commit.
+    """
     def __init__(self, cfg: Optional[HeadCoachConfig] = None):
         self.cfg = cfg or HeadCoachConfig()
 

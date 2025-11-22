@@ -1,0 +1,22 @@
+[
+  { "id": 1,  "start": 1020.20, "end": 1028.00, "side": "right" },
+  { "id": 2,  "start": 1039.20, "end": 1047.40, "side": "right" },
+  { "id": 3,  "start": 1060.04, "end": 1077.96, "side": "right" },
+  { "id": 4,  "start": 1135.00, "end": 1146.40, "side": "right" },
+  { "id": 5,  "start": 1161.06, "end": 1183.00, "side": "right" },
+  { "id": 6,  "start": 1198.00, "end": 1212.40, "side": "left"  },
+  { "id": 7,  "start": 1228.80, "end": 1242.60, "side": "left"  },
+  { "id": 8,  "start": 1247.60, "end": 1255.60, "side": "right" },
+  { "id": 9,  "start": 1264.67, "end": 1276.60, "side": "left"  },
+  { "id": 10, "start": 1298.51, "end": 1312.60, "side": "right" },
+  { "id": 11, "start": 1329.80, "end": 1340.60, "side": "left"  },
+  { "id": 12, "start": 1357.00, "end": 1366.00, "side": "right" },
+  { "id": 13, "start": 1403.80, "end": 1418.20, "side": "left"  },
+  { "id": 14, "start": 1430.40, "end": 1448.60, "side": "left"  },
+  { "id": 15, "start": 1459.81, "end": 1477.20, "side": "left"  },
+  { "id": 16, "start": 1510.00, "end": 1529.80, "side": "right" },
+  { "id": 17, "start": 1536.45, "end": 1546.00, "side": "right" },
+  { "id": 18, "start": 1559.20, "end": 1568.60, "side": "right" },
+  { "id": 19, "start": 1578.94, "end": 1595.33, "side": "right" }
+]
+
