@@ -1,0 +1,9 @@
+# Test: mantieni solo i rally 1, 3, 5, 7, 10, 15, 20
+1
+3
+5
+7
+10
+15
+20
+

@@ -227,6 +227,12 @@ class HeadCoach:
             # se non è un ace/errore e non c'è attività → no rally
             return False
         
+        # Filtro aggiuntivo: se ha serve ma nessuna azione palla, è probabilmente un segmento vuoto
+        # (es. inizio finestra con pezzo morto prima del primo rally vero)
+        if has_serve and not has_ball_action and duration > 1.0:
+            # serve presente ma nessuna azione palla → segmento vuoto, scarta
+            return False
+        
         return True
 
     # -------------------------------------------------
@@ -326,6 +332,22 @@ class HeadCoach:
             last_action = max(ball_actions, key=lambda e: e.time)
             # non lasciamo mai più di 3s di coda dopo l'ultima azione
             candidate_end = min(candidate_end, last_action.time + 3.0)
+        
+        # TODO (opzionale, bassa priorità): Micro-tuning fine rally
+        # Se ci sono HIT/ATTACK/SET negli ultimi 1-1.5 secondi prima di seg.end,
+        # estendi l'end al timestamp dell'ultima azione + 0.3s, purché non superi:
+        # - il prossimo SERVE_START
+        # - il t_end della finestra (se disponibile)
+        # 
+        # Esempio implementazione (commentata):
+        # recent_actions = [a for a in ball_actions if seg.end - 1.5 <= a.time <= seg.end]
+        # if recent_actions:
+        #     last_recent = max(recent_actions, key=lambda e: e.time)
+        #     extended_end = min(last_recent.time + 0.3, candidate_end)
+        #     # Verifica che non ci sia un serve subito dopo
+        #     next_serves = [e for e in evts if e.type == EventType.SERVE_START and e.time > seg.end]
+        #     if not next_serves or extended_end < next_serves[0].time:
+        #         candidate_end = extended_end
         
         # applica candidate_end se non rende il rally ridicolo
         if candidate_end - seg.start >= 1.5:

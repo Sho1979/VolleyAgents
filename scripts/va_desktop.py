@@ -23,6 +23,12 @@ from volley_agents.agents.audio_agent import AudioAgent, WhistleDetectorConfig
 from volley_agents.agents.motion_agent import MotionAgent, OpticalFlowConfig, FrameSample
 from volley_agents.agents.serve_agent import ServeAgent, ServeAgentConfig
 from volley_agents.agents.touch_sequence_agent import TouchSequenceAgent, TouchSequenceConfig
+from volley_agents.agents.scoreboard_v2 import (
+    ScoreboardAgentV2, 
+    ScoreboardConfig,
+    find_scoreboard_profile,
+    normalize_roi_to_absolute,
+)
 from volley_agents.fusion.head_coach import HeadCoach, HeadCoachConfig
 from volley_agents.fusion.master_coach import MasterCoach, MasterCoachConfig
 
@@ -50,6 +56,10 @@ class VolleyAgentsApp(tk.Tk):
         self.rallies: List[Rally] = []
         self.roi_left: Optional[Tuple[int, int, int, int]] = None  # (x, y, w, h)
         self.roi_right: Optional[Tuple[int, int, int, int]] = None  # (x, y, w, h)
+        
+        # ScoreboardAgentV2 configuration (GUI-based)
+        self.var_use_scoreboard = tk.BooleanVar(value=False)
+        self.scoreboard_main_roi: Optional[Tuple[int, int, int, int]] = None  # (x, y, w, h) - ROI principale del tabellone
 
         self._build_ui()
 
@@ -103,6 +113,32 @@ class VolleyAgentsApp(tk.Tk):
         self.lbl_roi_status = ttk.Label(frm_roi, text="ROI: SX=❌ DX=❌")
         self.lbl_roi_status.pack(side="left", padx=10)
 
+        # Sezione Tabellone (Scoreboard)
+        frm_scoreboard = ttk.LabelFrame(self, text="Tabellone (Scoreboard)", padding=10)
+        frm_scoreboard.pack(fill="x", padx=10, pady=5)
+
+        # Checkbox per abilitare lettura tabellone
+        chk_scoreboard = ttk.Checkbutton(
+            frm_scoreboard,
+            text="Abilita lettura tabellone",
+            variable=self.var_use_scoreboard,
+            command=self._on_scoreboard_checkbox_changed
+        )
+        chk_scoreboard.pack(side="left", padx=5)
+
+        # Pulsante per selezionare ROI tabellone
+        self.btn_scoreboard_roi = ttk.Button(
+            frm_scoreboard,
+            text="Seleziona tabellone",
+            command=self.on_select_scoreboard_roi,
+            state="disabled"
+        )
+        self.btn_scoreboard_roi.pack(side="left", padx=5)
+
+        # Label di stato ROI tabellone
+        self.lbl_scoreboard_status = ttk.Label(frm_scoreboard, text="ROI tabellone non configurata")
+        self.lbl_scoreboard_status.pack(side="left", padx=10)
+
         # Pulsanti
         frm_buttons = ttk.Frame(self, padding=10)
         frm_buttons.pack(fill="x")
@@ -143,6 +179,8 @@ class VolleyAgentsApp(tk.Tk):
         )
         if path:
             self.video_path.set(path)
+            # Prova a caricare configurazione tabellone salvata per questo video
+            self._load_scoreboard_config()
 
     def on_browse_audio(self):
         path = filedialog.askopenfilename(
@@ -230,6 +268,177 @@ class VolleyAgentsApp(tk.Tk):
         left_status = "✅" if self.roi_left else "❌"
         right_status = "✅" if self.roi_right else "❌"
         self.lbl_roi_status.config(text=f"ROI: SX={left_status} DX={right_status}")
+
+    def _on_scoreboard_checkbox_changed(self):
+        """Callback quando la checkbox del tabellone cambia stato."""
+        if self.var_use_scoreboard.get():
+            self.btn_scoreboard_roi.config(state="normal")
+        else:
+            self.btn_scoreboard_roi.config(state="disabled")
+
+    def _update_scoreboard_status(self):
+        """Aggiorna l'etichetta dello stato ROI tabellone."""
+        if self.scoreboard_main_roi is None:
+            self.lbl_scoreboard_status.config(text="ROI tabellone non configurata")
+        else:
+            x, y, w, h = self.scoreboard_main_roi
+            self.lbl_scoreboard_status.config(text=f"ROI tabellone: x={x}, y={y}, w={w}, h={h}")
+
+    def _compute_digit_rois(self, main_roi: Tuple[int, int, int, int]) -> dict:
+        """
+        Calcola automaticamente le 4 sub-ROI delle cifre a partire dalla ROI principale.
+        
+        Assumiamo un layout standard:
+        - Le 4 cifre sono allineate orizzontalmente in alto nella ROI
+        - Layout: [HOME TENS] [HOME UNITS] [AWAY TENS] [AWAY UNITS]
+        - Dividiamo la ROI in 4 colonne uguali
+        - Usiamo solo la parte superiore (60% dell'altezza) per evitare elementi inferiori
+        
+        Args:
+            main_roi: Tuple (x, y, w, h) - ROI principale del tabellone
+            
+        Returns:
+            Dict con le 4 sub-ROI relative alla ROI principale:
+            {
+                "digit_home_tens": (x_rel, y_rel, w_rel, h_rel),
+                "digit_home_units": (x_rel, y_rel, w_rel, h_rel),
+                "digit_away_tens": (x_rel, y_rel, w_rel, h_rel),
+                "digit_away_units": (x_rel, y_rel, w_rel, h_rel),
+            }
+        """
+        x_main, y_main, w_main, h_main = main_roi
+        
+        # Usa 60% dell'altezza per la parte superiore (dove sono le cifre)
+        h_digit = int(0.60 * h_main)
+        
+        # Dividi la larghezza in 4 colonne uguali
+        w_col = w_main // 4
+        
+        # Calcola le 4 sub-ROI (coordinate relative alla ROI principale)
+        # Colonna 0: HOME TENS
+        digit_home_tens = (0, 0, w_col, h_digit)
+        
+        # Colonna 1: HOME UNITS
+        digit_home_units = (w_col, 0, w_col, h_digit)
+        
+        # Colonna 2: AWAY TENS
+        digit_away_tens = (2 * w_col, 0, w_col, h_digit)
+        
+        # Colonna 3: AWAY UNITS
+        digit_away_units = (3 * w_col, 0, w_col, h_digit)
+        
+        return {
+            "digit_home_tens": digit_home_tens,
+            "digit_home_units": digit_home_units,
+            "digit_away_tens": digit_away_tens,
+            "digit_away_units": digit_away_units,
+        }
+
+    def on_select_scoreboard_roi(self):
+        """Seleziona ROI per il tabellone dal video."""
+        video_path = Path(self.video_path.get())
+        if not video_path.exists():
+            messagebox.showerror("Errore", "Seleziona prima un video.")
+            return
+
+        if cv2 is None:
+            messagebox.showerror("Errore", "OpenCV non disponibile per la selezione ROI.")
+            return
+
+        # Carica un frame dal video per la selezione ROI
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            messagebox.showerror("Errore", f"Impossibile aprire il video: {video_path}")
+            return
+
+        # Prova a prendere un frame nell'intervallo t_start/t_end, altrimenti frame centrale
+        try:
+            t_start = float(self.t_start.get())
+            t_end = float(self.t_end.get())
+            t_target = (t_start + t_end) / 2.0
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            frame_number = int(t_target * fps)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        except (ValueError, AttributeError):
+            # Fallback: frame centrale del video
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.set(cv2.CAP_PROP_POS_FRAMES, total_frames // 2)
+
+        ret, frame = cap.read()
+        cap.release()
+
+        if not ret:
+            messagebox.showerror("Errore", "Impossibile leggere un frame dal video.")
+            return
+
+        # Mostra istruzioni in italiano
+        print("Seleziona il tabellone e premi SPAZIO o ENTER per confermare, ESC per annullare")
+
+        # Seleziona ROI
+        roi = cv2.selectROI("Seleziona il tabellone - Premi SPAZIO o ENTER per confermare, ESC per annullare", frame, False)
+        cv2.destroyAllWindows()
+
+        if roi[2] > 0 and roi[3] > 0:  # w > 0 e h > 0
+            self.scoreboard_main_roi = tuple(map(int, roi))
+            self._update_scoreboard_status()
+            print(f"ROI tabellone selezionata: {self.scoreboard_main_roi}")
+            # Salva la configurazione per riutilizzo futuro
+            self._save_scoreboard_config()
+        else:
+            print("Selezione ROI tabellone annullata")
+
+    def _save_scoreboard_config(self):
+        """Salva la configurazione ROI del tabellone in un file JSON."""
+        if self.scoreboard_main_roi is None:
+            return
+        
+        video_path = Path(self.video_path.get())
+        if not video_path.exists():
+            return
+        
+        # Salva nella stessa cartella del video con nome scoreboard_config.json
+        config_path = video_path.parent / "scoreboard_config.json"
+        
+        try:
+            config_data = {
+                "video_path": str(video_path),
+                "video_name": video_path.name,
+                "scoreboard_main_roi": list(self.scoreboard_main_roi),
+            }
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(config_data, f, indent=2)
+            print(f"Configurazione tabellone salvata in: {config_path}")
+        except Exception as e:
+            print(f"Errore nel salvare configurazione tabellone: {e}")
+
+    def _load_scoreboard_config(self):
+        """Carica la configurazione ROI del tabellone da file JSON se disponibile."""
+        video_path = Path(self.video_path.get())
+        if not video_path.exists():
+            return
+        
+        # Cerca nella stessa cartella del video
+        config_path = video_path.parent / "scoreboard_config.json"
+        
+        if not config_path.exists():
+            return
+        
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+            
+            # Verifica che il video corrisponda
+            if config_data.get("video_name") != video_path.name:
+                return
+            
+            # Carica la ROI
+            roi_list = config_data.get("scoreboard_main_roi")
+            if roi_list and len(roi_list) == 4:
+                self.scoreboard_main_roi = tuple(map(int, roi_list))
+                self._update_scoreboard_status()
+                print(f"Configurazione tabellone caricata da: {config_path}")
+        except Exception as e:
+            print(f"Errore nel caricare configurazione tabellone: {e}")
 
     def on_analyze(self):
         # Eseguiamo in thread separato per non bloccare la GUI
@@ -339,6 +548,65 @@ class VolleyAgentsApp(tk.Tk):
                     self.log(f"  -> {len(touch_events)} tocchi dettagliati (reception/set/attack).")
                 except Exception as e:
                     self.log(f"  !! Errore TouchSequenceAgent: {e}")
+
+                # ScoreboardAgentV2: lettura punteggio dal tabellone LED
+                if self.var_use_scoreboard.get():
+                    # Prova a trovare un profilo automatico basato sulle dimensioni del frame
+                    scoreboard_main_roi = self.scoreboard_main_roi
+                    
+                    if scoreboard_main_roi is None and len(frames) > 0:
+                        # Prova a usare un profilo predefinito
+                        first_frame = frames[0].frame
+                        h_frame, w_frame = first_frame.shape[:2]
+                        profile = find_scoreboard_profile(w_frame, h_frame)
+                        
+                        if profile is not None:
+                            # Usa il profilo per calcolare la ROI assoluta
+                            roi_norm = profile["main_roi"]
+                            scoreboard_main_roi = normalize_roi_to_absolute(roi_norm, w_frame, h_frame)
+                            self.log(f"📊 ScoreboardAgentV2: Profilo automatico rilevato: {profile.get('description', 'Unknown')}")
+                            self.log(f"  ROI calcolata da profilo: {scoreboard_main_roi}")
+                        else:
+                            self.log(f"📊 ScoreboardAgentV2: Nessun profilo trovato per frame {w_frame}x{h_frame}")
+                    
+                    if scoreboard_main_roi is None:
+                        self.log("📊 ScoreboardAgentV2: disattivato - Devi prima selezionare il tabellone (pulsante 'Seleziona tabellone').")
+                    else:
+                        self.log("📊 ScoreboardAgentV2: lettura punteggio dal tabellone...")
+                        try:
+                            # Calcola automaticamente le sub-ROI delle cifre
+                            digit_rois = self._compute_digit_rois(scoreboard_main_roi)
+                            
+                            # Crea configurazione
+                            x, y, w, h = scoreboard_main_roi
+                            scoreboard_config = ScoreboardConfig(
+                                x=x,
+                                y=y,
+                                w=w,
+                                h=h,
+                                digit_home_tens=digit_rois["digit_home_tens"],
+                                digit_home_units=digit_rois["digit_home_units"],
+                                digit_away_tens=digit_rois["digit_away_tens"],
+                                digit_away_units=digit_rois["digit_away_units"],
+                                history_size=15,
+                                min_stable_frames=5,
+                            )
+                            
+                            scoreboard_agent = ScoreboardAgentV2(
+                                cfg=scoreboard_config,
+                                enable_logging=True,
+                                log_callback=self.log  # Reindirizza log alla GUI
+                            )
+                            scoreboard_events = []
+                            for frame_sample in frames:
+                                events = scoreboard_agent.process_frame(frame_sample.frame, frame_sample.time)
+                                scoreboard_events.extend(events)
+                                timeline.extend(events)
+                            self.log(f"  -> {len(scoreboard_events)} eventi SCORE_CHANGE rilevati.")
+                        except Exception as e:
+                            self.log(f"  !! Errore ScoreboardAgentV2: {e}")
+                else:
+                    self.log("📊 ScoreboardAgentV2: disattivato (lettura tabellone non abilitata).")
 
             except Exception as e:
                 self.log(f"  !! Errore MotionAgent: {e}")
