@@ -35,6 +35,12 @@ class EventType(str, Enum):
 
     # Eventi campo/tecnici
     FIELD_MODEL_READY = "field_model_ready"
+    
+    # Eventi campo auto-calibrazione
+    FIELD_LINES_DETECTED = "field_lines_detected"      # linee campo trovate
+    FIELD_CORNERS_DETECTED = "field_corners_detected"  # 4 angoli campo
+    FIELD_HOMOGRAPHY_READY = "field_homography_ready"  # matrice omografia pronta
+    FIELD_ZONES_READY = "field_zones_ready"            # zone definite
 
     # Eventi ruoli/rotazioni
     ROTATION_UPDATE = "rotation_update"
@@ -46,6 +52,14 @@ class EventType(str, Enum):
     # Eventi salto
     JUMP_EVENT = "jump_event"
     JUMP_PEAK = "jump_peak"
+    
+    # Eventi palla
+    BALL_DETECTED = "ball_detected"           # palla rilevata nel frame
+    BALL_TRAJECTORY = "ball_trajectory"       # traiettoria stimata
+    BALL_TOUCH_GROUND = "ball_touch_ground"   # palla tocca terra
+    BALL_OUT = "ball_out"                     # palla fuori campo
+    BALL_CROSS_NET = "ball_cross_net"         # palla attraversa rete
+    BALL_SERVE = "ball_serve"                 # palla servita (conferma)
 
 
 @dataclass

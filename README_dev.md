@@ -145,6 +145,32 @@ VolleyAgents/
 
 - **Strategia**: preprocessing adattivo per LED (canale rosso/verde, equalizzazione, morfologia), EasyOCR come backend principale, template matching come fallback e detector di cambio frame come ulteriore segnale.
 - **Pipeline**: ROI → preprocessing → EasyOCR → fallback template matching → stabilizzazione temporale → evento `SCORE_CHANGE`.
+- **Calibrazione ROI**: prima di eseguire l'OCR è obbligatorio salvare una ROI reale del tabellone (x, y, w, h). Puoi usare la GUI (`va_desktop.py` → bottone "ROI tabellone") oppure il nuovo tool CLI:
+
+  ```bash
+  python -m tools.scoreboard.calibrate_scoreboard_v3 \
+      --video "Millennium Bienno.mp4" \
+      --time 1010.0 \
+      --output "scoreboard_config.json"
+  ```
+
+  Il JSON generato può essere ricaricato così:
+
+  ```python
+  from volley_agents.agents.scoreboard_v3 import ScoreboardAgentV3, ScoreboardConfigV3
+  from volley_agents.io.config import load_scoreboard_roi_config
+
+  roi = load_scoreboard_roi_config("scoreboard_config.json", expected_video="Millennium Bienno.mp4")
+  if roi is None:
+      raise RuntimeError("Scoreboard ROI mancante")
+
+  x, y, w, h = roi
+  scoreboard_agent = ScoreboardAgentV3(
+      ScoreboardConfigV3(x=x, y=y, w=w, h=h, led_color="red"),
+      enable_logging=True,
+  )
+  ```
+
 - **Configurazione GUI**: in `va_desktop.py` seleziona la ROI del tabellone, abilita la checkbox della lettura tabellone e (opzionale) salva i frame di debug nella cartella di output.
 - **Dipendenze**: installa EasyOCR (trascina con sé PyTorch) prima di lanciare la GUI:
 

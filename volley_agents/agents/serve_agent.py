@@ -26,13 +26,13 @@ class ServeAgentConfig:
     """
 
     # Soglie per motion nella ROI
-    roi_motion_threshold: float = 2.5  # aumentata per essere più selettivi
-    roi_motion_ratio: float = 1.5  # rapporto minimo tra ROI e resto frame (aumentato)
+    roi_motion_threshold: float = 4.0  # maggiore selettività sulla ROI
+    roi_motion_ratio: float = 2.0  # richiede ROI molto più attiva del resto
     roi_motion_percentile: float = 95.0  # usa percentile invece di media per rilevare spike
 
     # Matching con HIT
     max_hit_delay: float = 1.0  # max secondi tra serve e hit
-    min_serve_cooldown: float = 2.0  # min secondi tra serve consecutivi
+    min_serve_cooldown: float = 3.0  # min secondi tra serve consecutivi
 
     # Calibrazione con referee
     use_referee_calibration: bool = True  # usa REF_SERVE_READY/RELEASE per calibrare timing

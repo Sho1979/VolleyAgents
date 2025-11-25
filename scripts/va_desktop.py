@@ -29,6 +29,12 @@ from volley_agents.agents.scoreboard_v3 import (
 )
 from volley_agents.fusion.head_coach import HeadCoach, HeadCoachConfig
 from volley_agents.fusion.master_coach import MasterCoach, MasterCoachConfig
+from volley_agents.io.config import (
+    load_scoreboard_roi_config,
+    save_scoreboard_roi_config,
+)
+from volley_agents.calibration.field_auto import FieldAutoCalibrator, FieldAutoConfig
+from volley_agents.agents.ball_agent import BallAgent, BallAgentConfig
 
 # =============================================================================
 # HELPER: Conversione tempo mm:ss <-> secondi
@@ -372,22 +378,19 @@ class VolleyAgentsApp(tk.Tk):
         """Salva la configurazione ROI del tabellone in un file JSON."""
         if self.scoreboard_main_roi is None:
             return
-        
+
         video_path = Path(self.video_path.get())
         if not video_path.exists():
             return
-        
-        # Salva nella stessa cartella del video con nome scoreboard_config.json
+
         config_path = video_path.parent / "scoreboard_config.json"
-        
+
         try:
-            config_data = {
-                "video_path": str(video_path),
-                "video_name": video_path.name,
-                "scoreboard_main_roi": list(self.scoreboard_main_roi),
-            }
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(config_data, f, indent=2)
+            save_scoreboard_roi_config(
+                config_path,
+                self.scoreboard_main_roi,
+                video_path=video_path,
+            )
             print(f"Configurazione tabellone salvata in: {config_path}")
         except Exception as e:
             print(f"Errore nel salvare configurazione tabellone: {e}")
@@ -403,19 +406,14 @@ class VolleyAgentsApp(tk.Tk):
         
         if not config_path.exists():
             return
-        
+
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                config_data = json.load(f)
-            
-            # Verifica che il video corrisponda
-            if config_data.get("video_name") != video_path.name:
-                return
-            
-            # Carica la ROI
-            roi_list = config_data.get("scoreboard_main_roi")
-            if roi_list and len(roi_list) == 4:
-                self.scoreboard_main_roi = tuple(map(int, roi_list))
+            roi = load_scoreboard_roi_config(
+                config_path,
+                expected_video=video_path.name,
+            )
+            if roi:
+                self.scoreboard_main_roi = roi
                 self._update_scoreboard_status()
                 print(f"Configurazione tabellone caricata da: {config_path}")
         except Exception as e:
@@ -593,6 +591,50 @@ class VolleyAgentsApp(tk.Tk):
                             self.log(traceback.format_exc())
                 else:
                     self.log("📊 ScoreboardAgentV3: disattivato (lettura tabellone non abilitata).")
+
+                # ========================
+                # NUOVI AGENTI CV
+                # ========================
+
+                # 1. Field Auto-Calibration (primo frame)
+                field_calibrator = None
+                if len(frames) > 0:
+                    self.log("📐 FieldAutoCalibrator: calibrazione campo...")
+                    try:
+                        field_calibrator = FieldAutoCalibrator()
+                        field_events = field_calibrator.calibrate(frames[0].frame)
+                        timeline.extend(field_events)
+
+                        if field_calibrator.get_homography() is not None:
+                            ppm = field_calibrator.get_pixels_per_meter()
+                            self.log(f"  -> Campo calibrato! PPM={ppm:.1f}" if ppm else "  -> Campo calibrato!")
+                        else:
+                            self.log("  -> ⚠️ Calibrazione campo fallita, uso preset")
+                            field_calibrator = None
+                    except Exception as e:
+                        self.log(f"  !! Errore FieldAutoCalibrator: {e}")
+                        import traceback
+                        self.log(traceback.format_exc())
+                        field_calibrator = None
+
+                # 2. Ball Tracking
+                self.log("🏐 BallAgent: tracking palla...")
+                try:
+                    ball_cfg = BallAgentConfig(
+                        enable_logging=True,
+                        log_callback=self.log,
+                    )
+                    ball_agent = BallAgent(config=ball_cfg)
+                    ball_events = ball_agent.run(
+                        frames,
+                        timeline=timeline,
+                        field_calibrator=field_calibrator,
+                    )
+                    self.log(f"  -> {len(ball_events)} eventi palla rilevati.")
+                except Exception as e:
+                    self.log(f"  !! Errore BallAgent: {e}")
+                    import traceback
+                    self.log(traceback.format_exc())
 
             except Exception as e:
                 self.log(f"  !! Errore MotionAgent: {e}")

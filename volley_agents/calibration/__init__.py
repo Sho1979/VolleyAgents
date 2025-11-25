@@ -30,6 +30,11 @@ from volley_agents.calibration.field_calibrator_gui import (
     apply_calibration,
 )
 
+from volley_agents.calibration.field_auto import (
+    FieldAutoCalibrator,
+    FieldAutoConfig,
+)
+
 __all__ = [
     # Generic
     'FieldCalibrator',
@@ -46,5 +51,8 @@ __all__ = [
     'QuickCalibrator',
     'CalibrationResult',
     'apply_calibration',
+    # Auto-calibration
+    'FieldAutoCalibrator',
+    'FieldAutoConfig',
 ]
 

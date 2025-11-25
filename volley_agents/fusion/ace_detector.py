@@ -327,10 +327,14 @@ class AceDetector:
         for motion in motion_events:
             if motion.type == return_hit_type:
                 if check_start < motion.time < check_end:
-                    # Estrai magnitudine
-                    magnitude = getattr(motion, 'magnitude', 0)
+                    # Estrai magnitudine - FIX: usa left_mag/right_mag in base al tipo
+                    magnitude = 0.0
                     if hasattr(motion, 'extra') and motion.extra:
-                        magnitude = motion.extra.get('magnitude', magnitude)
+                        # motion_agent salva left_mag e right_mag, non 'magnitude'
+                        if motion.type == EventType.HIT_RIGHT:
+                            magnitude = motion.extra.get('right_mag', 0.0)
+                        else:  # HIT_LEFT
+                            magnitude = motion.extra.get('left_mag', 0.0)
 
                     return_hits.append((motion.time, magnitude))
                     self._debug(f"      → HIT @ {format_time(motion.time)} (mag={magnitude:.2f})")

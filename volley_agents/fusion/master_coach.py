@@ -69,6 +69,8 @@ class MasterCoachConfig:
     ace_min_duration: float = 1.5  # consente rally molto brevi per ace
     ace_confidence_threshold: float = 0.70
     ace_whistle_window: float = 5.5  # s dal serve per cercare il fischio
+    ace_prefer_normal_on_overlap: bool = True  # se True, basta qualsiasi overlap per scartare l'ace
+    ace_overlap_cover_ratio: float = 0.3  # fallback ratio quando prefer_normal_on_overlap=False
     
     # Parametri per split e filtro finale
     min_dur_split: float = 2.0  # durata minima per accettare un sotto-rally dopo split
@@ -217,7 +219,7 @@ class MasterCoach:
         ace_cfg = AceConfig(
             min_serve_confidence=self.cfg.ace_confidence_threshold,
             min_ace_duration=1.5,
-            max_ace_duration=6.0,
+            max_ace_duration=4.0,  # Ridotto da 6.0 a 4.0 per eliminare ace falsi
             check_direction=True,
             direction_check_delay=0.5,
             min_return_motion_magnitude=0.8,
@@ -277,6 +279,8 @@ class MasterCoach:
 
         # Verifica quali ace non sono già coperti da rally normali
         new_aces = []
+        cover_ratio = max(0.0, min(1.0, getattr(self.cfg, "ace_overlap_cover_ratio", 0.3)))
+        prefer_normal = getattr(self.cfg, "ace_prefer_normal_on_overlap", True)
         for ace in ace_rallies:
             ace_start = ace.start
             ace_end = ace.end
@@ -287,12 +291,16 @@ class MasterCoach:
                 # Se l'ace è dentro un rally normale (con margine), è già coperto
                 overlap_start = max(ace_start, rally.start)
                 overlap_end = min(ace_end, rally.end)
-                if overlap_end > overlap_start:
-                    # C'è overlap: se l'overlap è > 50% della durata dell'ace, è coperto
-                    ace_duration = ace_end - ace_start
-                    overlap_duration = overlap_end - overlap_start
-                    if overlap_duration > ace_duration * 0.5:
+                overlap_duration = overlap_end - overlap_start
+                if overlap_duration > 0:
+                    # C'è overlap: preferisci il rally normale (o applica ratio configurabile)
+                    ace_duration = max(ace_end - ace_start, 1e-6)
+                    ace_fully_inside = rally.start <= ace_start and rally.end >= ace_end
+                    if ace_fully_inside or (prefer_normal and overlap_duration > 0):
                         is_covered = True
+                    elif overlap_duration >= ace_duration * cover_ratio:
+                        is_covered = True
+                    if is_covered:
                         if self.enable_logging:
                             self._log(
                                 f"   ⚡ Ace @ {format_time_short(ace_start)} già coperto da rally "

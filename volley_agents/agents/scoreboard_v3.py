@@ -112,6 +112,8 @@ class ScoreboardAgentV3:
         self._change_detected_at: Optional[float] = None
 
         self._debug_count: int = 0
+        self._warned_roi_unset: bool = False
+        self._warned_roi_default: bool = False
         if cfg.save_debug_images:
             Path(cfg.debug_dir).mkdir(parents=True, exist_ok=True)
 
@@ -158,6 +160,27 @@ class ScoreboardAgentV3:
         """Estrae la ROI del tabellone dal frame."""
         cfg = self.cfg
         h_frame, w_frame = frame_bgr.shape[:2]
+
+        if (cfg.w <= 1 or cfg.h <= 1) and not self._warned_roi_unset:
+            self._log(
+                "ROI tabellone non configurata (w/h troppo piccoli). "
+                "Usa tools/scoreboard/calibrate_scoreboard_v3.py per calibrare x,y,w,h."
+            )
+            self._warned_roi_unset = True
+            return None
+
+        if (
+            cfg.x == 0
+            and cfg.y == 0
+            and cfg.w == 100
+            and cfg.h == 50
+            and not self._warned_roi_default
+        ):
+            self._log(
+                "ROI tabellone sta usando i valori di default (0,0,100,50). "
+                "Configura i valori reali del tabellone per abilitare l'OCR."
+            )
+            self._warned_roi_default = True
 
         x = max(0, min(cfg.x, w_frame - 1))
         y = max(0, min(cfg.y, h_frame - 1))
