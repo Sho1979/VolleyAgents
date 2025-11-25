@@ -27,6 +27,12 @@ from volley_agents.fusion.rules_fipav import (
     validate_rally_touches,
     MAX_TOUCHES_PER_SIDE,
 )
+from volley_agents.fusion.ace_detector import (
+    AceDetector,
+    AceConfig,
+    find_all_aces,
+    format_time_short,
+)
 
 
 @dataclass
@@ -59,6 +65,10 @@ class MasterCoachConfig:
     # Consensus considerato "forte" se AudioAgent + ServeAgent + (ScoreboardAgent o TouchSequenceAgent)
     # hanno tutti confidence > strong_consensus_threshold
     strong_consensus_threshold: float = 0.7
+    # Ace detection (serve forte + fischio rapido)
+    ace_min_duration: float = 1.5  # consente rally molto brevi per ace
+    ace_confidence_threshold: float = 0.70
+    ace_whistle_window: float = 5.5  # s dal serve per cercare il fischio
     
     # Parametri per split e filtro finale
     min_dur_split: float = 2.0  # durata minima per accettare un sotto-rally dopo split
@@ -144,6 +154,15 @@ class MasterCoach:
 
         # APPROCCIO ANALISI 1: HeadCoach-based (design originale)
         
+        # 0) Rileva ACE prima di costruire rally normali
+        ace_rallies = self._detect_aces(timeline)
+        
+        # Set dei serve già usati per ace (per riferimento, non usato direttamente qui)
+        ace_serve_times = {ace['serve_time'] for ace in ace_rallies}
+        
+        if self.enable_logging:
+            self._log(f"⚡ Ace detection: {len(ace_rallies)} ace trovati")
+        
         # 1) Usa SOLO HeadCoach per costruire i rally grezzi
         # HeadCoach usa score-first se SCORE_CHANGE è affidabile, altrimenti audio+motion
         raw_rallies = self.head_coach.build_rallies(timeline)
@@ -156,10 +175,17 @@ class MasterCoach:
         
         if self.enable_logging:
             self._log(f"🧹 Dopo deduplica: {len(cleaned_rallies)} rally")
+        
+        # 2.5) Aggiungi ace non coperti dai rally normali
+        ace_rally_objects = self._convert_aces_to_rallies(ace_rallies)
+        final_rallies = self._merge_ace_with_normal_rallies(ace_rally_objects, cleaned_rallies)
+        
+        if self.enable_logging:
+            self._log(f"🔀 Dopo merge ace: {len(final_rallies)} rally totali ({len(ace_rally_objects)} ace + {len(cleaned_rallies)} normali)")
 
         # 3) Arricchisci i rally con informazioni da altri agenti
         enriched_rallies = []
-        for rally in cleaned_rallies:
+        for rally in final_rallies:
             enriched = self._enrich_rally(rally, timeline)
             if enriched is not None:
                 enriched_rallies.append(enriched)
@@ -177,6 +203,116 @@ class MasterCoach:
             self._log(f"\n✅ MasterCoach: {len(enriched_rallies)} rally validati (HeadCoach-based)")
 
         return enriched_rallies
+
+    def _detect_aces(self, timeline: Timeline) -> List[Dict]:
+        """
+        Rileva ace nella timeline usando AceDetector.
+
+        Args:
+            timeline: Timeline con tutti gli eventi
+
+        Returns:
+            Lista di dict ace (formato AceDetector)
+        """
+        ace_cfg = AceConfig(
+            min_serve_confidence=self.cfg.ace_confidence_threshold,
+            min_ace_duration=1.5,
+            max_ace_duration=6.0,
+            check_direction=True,
+            direction_check_delay=0.5,
+            min_return_motion_magnitude=0.8,
+            verbose_log=self.enable_logging,
+            pre_roll=0.5,
+            post_roll=self.cfg.post_roll,
+        )
+
+        ace_rallies = find_all_aces(
+            events=timeline.sorted(),
+            cfg=ace_cfg,
+            log_callback=self._log
+        )
+
+        return ace_rallies
+
+    def _convert_aces_to_rallies(self, ace_rallies: List[Dict]) -> List[Rally]:
+        """
+        Converte ace dict in Rally objects.
+
+        Args:
+            ace_rallies: Lista di dict ace da AceDetector
+
+        Returns:
+            Lista di Rally objects
+        """
+        rally_objects = []
+        for ace in ace_rallies:
+            rally = Rally(
+                start=ace['start'],
+                end=ace['end'],
+                side=ace.get('side', ace.get('serve_side', 'unknown'))
+            )
+            rally_objects.append(rally)
+        return rally_objects
+
+    def _merge_ace_with_normal_rallies(
+        self,
+        ace_rallies: List[Rally],
+        normal_rallies: List[Rally]
+    ) -> List[Rally]:
+        """
+        Combina ace e rally normali, rimuovendo duplicati/overlap.
+
+        Se un ace è già coperto da un rally normale, mantiene solo il rally normale.
+        Altrimenti aggiunge l'ace.
+
+        Args:
+            ace_rallies: Lista di Rally ace
+            normal_rallies: Lista di Rally normali
+
+        Returns:
+            Lista combinata di Rally ordinata per tempo
+        """
+        if not ace_rallies:
+            return normal_rallies
+
+        # Verifica quali ace non sono già coperti da rally normali
+        new_aces = []
+        for ace in ace_rallies:
+            ace_start = ace.start
+            ace_end = ace.end
+
+            # Controlla overlap con rally normali
+            is_covered = False
+            for rally in normal_rallies:
+                # Se l'ace è dentro un rally normale (con margine), è già coperto
+                overlap_start = max(ace_start, rally.start)
+                overlap_end = min(ace_end, rally.end)
+                if overlap_end > overlap_start:
+                    # C'è overlap: se l'overlap è > 50% della durata dell'ace, è coperto
+                    ace_duration = ace_end - ace_start
+                    overlap_duration = overlap_end - overlap_start
+                    if overlap_duration > ace_duration * 0.5:
+                        is_covered = True
+                        if self.enable_logging:
+                            self._log(
+                                f"   ⚡ Ace @ {format_time_short(ace_start)} già coperto da rally "
+                                f"[{format_time_short(rally.start)}-{format_time_short(rally.end)}]"
+                            )
+                        break
+
+            if not is_covered:
+                new_aces.append(ace)
+                if self.enable_logging:
+                    self._log(
+                        f"   ⚡ Ace @ {format_time_short(ace_start)} aggiunto "
+                        f"(non coperto da rally normali)"
+                    )
+
+        # Combina e ordina
+        all_rallies = normal_rallies + new_aces
+        all_rallies.sort(key=lambda r: r.start)
+
+        return all_rallies
 
     def _analyze_game_with_serve_splitting(self, timeline: Timeline) -> List[Rally]:
         """
@@ -386,12 +522,14 @@ class MasterCoach:
                     
                     # Verifica durata minima (dopo pairing)
                     duration = end_time - start_time
-                    if duration >= self.cfg.min_rally_duration:
-                        rallies.append(Rally(
-                            start=start_time,
-                            end=end_time,
-                            side="unknown"
-                        ))
+                    candidate = Rally(
+                        start=start_time,
+                        end=end_time,
+                        side="unknown",
+                    )
+                    effective_min = self._get_effective_min_duration(candidate, timeline)
+                    if duration >= effective_min:
+                        rallies.append(candidate)
                     end_idx += 1  # Usa ogni end solo una volta
                     break  # Stop qui - passa al prossimo start
                 end_idx += 1
@@ -426,13 +564,14 @@ class MasterCoach:
         
         for rally in rallies_sorted:
             duration = rally.end - rally.start
+            effective_min = self._get_effective_min_duration(rally, timeline)
             
             # Filtro 1: durata minima e massima
-            if duration < cfg.min_rally_duration:
+            if duration < effective_min:
                 if self.enable_logging:
                     self._log(
                         f"🚫 Rally scartato: durata troppo corta "
-                        f"({duration:.2f}s < {cfg.min_rally_duration:.2f}s) [{rally.start:.2f}-{rally.end:.2f}s]"
+                        f"({duration:.2f}s < {effective_min:.2f}s) [{rally.start:.2f}-{rally.end:.2f}s]"
                     )
                 continue
             if duration > cfg.max_rally_duration:
@@ -928,13 +1067,14 @@ class MasterCoach:
             
             # Verifica durata finale dopo post-processing
             final_duration = rally.end - rally.start
-            if final_duration >= cfg.min_rally_duration:
+            effective_min = self._get_effective_min_duration(rally, timeline)
+            if final_duration >= effective_min:
                 cleaned.append(rally)
             else:
                 if self.enable_logging:
                     self._log(
                         f"🚫 Rally scartato dopo post-processing: durata {final_duration:.2f}s "
-                        f"< {cfg.min_rally_duration:.2f}s"
+                        f"< {effective_min:.2f}s"
                     )
         
         return cleaned
@@ -983,7 +1123,7 @@ class MasterCoach:
         extended_rallies = self._orchestrate_rally_extensions_rigorous(raw_rallies, timeline)
 
         # Rimuovi duplicati e sovrapposizioni tra macro-rally
-        macro_rallies = self._filter_final_rallies(extended_rallies)
+        macro_rallies = self._filter_final_rallies(extended_rallies, timeline)
 
         return macro_rallies
 
@@ -1709,7 +1849,8 @@ class MasterCoach:
             # Se non c'è SERVE_START ma il rally ha durata valida, accettalo comunque
             if not serve_at_start:
                 duration = rally.end - rally.start
-                if duration >= self.cfg.min_rally_duration and duration <= self.cfg.max_rally_duration:
+                effective_min = self._get_effective_min_duration(rally, timeline)
+                if duration >= effective_min and duration <= self.cfg.max_rally_duration:
                     # Rally valido anche senza SERVE_START esplicito
                     extended.append(rally)
                     if self.enable_logging:
@@ -1802,7 +1943,8 @@ class MasterCoach:
 
             # Fallback: se il rally ha durata valida, mantienilo anche senza conferma esplicita
             duration = rally.end - rally.start
-            if duration >= self.cfg.min_rally_duration and duration <= self.cfg.max_rally_duration:
+            effective_min = self._get_effective_min_duration(rally, timeline)
+            if duration >= effective_min and duration <= self.cfg.max_rally_duration:
                 extended.append(rally)
                 if self.enable_logging:
                     self._log(
@@ -2274,7 +2416,12 @@ class MasterCoach:
 
         return None
 
-    def _get_effective_min_duration(self, rally: Rally, timeline: Timeline) -> float:
+    def _get_effective_min_duration(
+        self,
+        rally: Rally,
+        timeline: Optional[Timeline],
+        events: Optional[List[Event]] = None,
+    ) -> float:
         """
         Calcola durata minima effettiva per un rally.
 
@@ -2289,16 +2436,34 @@ class MasterCoach:
             Durata minima effettiva (secondi)
         """
         cfg = self.cfg
-        if not cfg.dynamic_min_duration:
+
+        if events is not None:
+            events_sorted = events
+        elif timeline is not None:
+            events_sorted = timeline.sorted()
+        else:
+            events_sorted = []
+
+        ace_pair = self._detect_ace_pattern(rally, events_sorted)
+        if ace_pair:
+            serve_event, whistle_event = ace_pair
+            if self.enable_logging and not getattr(rally, "_ace_flagged", False):
+                delta = whistle_event.time - serve_event.time
+                self._log(
+                    f"⚡ ACE rilevato: serve@{serve_event.time:.2f}s -> whistle@{whistle_event.time:.2f}s "
+                    f"(dur={delta:.2f}s). Min durata impostata a {cfg.ace_min_duration:.2f}s"
+                )
+                setattr(rally, "_ace_flagged", True)
+            return min(cfg.ace_min_duration, cfg.min_rally_duration)
+
+        if not cfg.dynamic_min_duration or not events_sorted:
             return cfg.min_rally_duration
 
-        # Verifica se c'è forte consensus
         events_in_rally = [
-            e for e in timeline.sorted()
+            e for e in events_sorted
             if rally.start <= e.time <= rally.end
         ]
 
-        # Cerca eventi da AudioAgent, ServeAgent, ScoreboardAgent, TouchSequenceAgent
         has_whistle = any(
             e.type == EventType.WHISTLE_END
             and e.confidence >= cfg.strong_consensus_threshold
@@ -2314,7 +2479,6 @@ class MasterCoach:
             and e.confidence >= cfg.strong_consensus_threshold
             for e in events_in_rally
         )
-        # TouchSequenceAgent: verifica se c'è un ultimo tocco marcato come fine sequenza
         has_touch_seq_end = any(
             e.type in (EventType.ATTACK_LEFT, EventType.ATTACK_RIGHT, EventType.TOUCH_LEFT, EventType.TOUCH_RIGHT)
             and e.extra
@@ -2323,13 +2487,83 @@ class MasterCoach:
             for e in events_in_rally
         )
 
-        # Consenso forte se: (Audio + Serve) E (Score OR TouchSequence)
         strong_consensus = (has_whistle and has_serve) and (has_score or has_touch_seq_end)
 
         if strong_consensus:
             return cfg.strong_consensus_min_duration
-        else:
-            return cfg.min_rally_duration
+        return cfg.min_rally_duration
+
+    def _detect_ace_pattern(
+        self,
+        rally: Rally,
+        events: List[Event],
+    ) -> Optional[Tuple[Event, Event]]:
+        """Rileva pattern tipico dell'ace: serve forte + whistle rapido senza altri serve."""
+        if not events:
+            return None
+
+        cfg = self.cfg
+        serve_event = self._get_candidate_serve_event(
+            rally,
+            events,
+            min_confidence=cfg.ace_confidence_threshold,
+        )
+        if not serve_event:
+            return None
+
+        whistle_event = next(
+            (
+                e
+                for e in events
+                if e.type == EventType.WHISTLE_END
+                and serve_event.time < e.time <= serve_event.time + cfg.ace_whistle_window
+            ),
+            None,
+        )
+        if not whistle_event:
+            return None
+
+        other_serves = any(
+            e.type == EventType.SERVE_START
+            and serve_event.time < e.time < whistle_event.time
+            for e in events
+        )
+        if other_serves:
+            return None
+
+        return serve_event, whistle_event
+
+    def _get_candidate_serve_event(
+        self,
+        rally: Rally,
+        events: List[Event],
+        min_confidence: float = 0.0,
+    ) -> Optional[Event]:
+        """Restituisce il SERVE_START più rappresentativo per un rally."""
+        if not events:
+            return None
+
+        window_start = rally.start - 0.8
+        window_end = rally.start + 2.0
+        serves = [
+            e for e in events
+            if e.type == EventType.SERVE_START
+            and e.confidence >= min_confidence
+            and window_start <= e.time <= window_end
+        ]
+
+        if not serves:
+            serves = [
+                e for e in events
+                if e.type == EventType.SERVE_START
+                and rally.start <= e.time <= rally.end
+                and e.confidence >= min_confidence
+            ]
+
+        if not serves:
+            return None
+
+        return max(serves, key=lambda e: e.confidence)
 
     def _orchestrate_rally_extensions(
         self, rallies: List[Rally], timeline: Timeline
@@ -2388,7 +2622,7 @@ class MasterCoach:
 
         return extended
 
-    def _filter_final_rallies(self, rallies: List[Rally]) -> List[Rally]:
+    def _filter_final_rallies(self, rallies: List[Rally], timeline: Optional[Timeline] = None) -> List[Rally]:
         """
         Filtro finale per rimuovere duplicati e sovrapposizioni tra rally.
 
@@ -2409,9 +2643,14 @@ class MasterCoach:
 
         for rally in rallies_sorted:
             duration = rally.end - rally.start
+            effective_min = (
+                self._get_effective_min_duration(rally, timeline)
+                if timeline is not None
+                else cfg.min_rally_duration
+            )
 
             # Filtro 1: durata minima e massima
-            if duration < cfg.min_rally_duration:
+            if duration < effective_min:
                 continue
             if duration > cfg.max_rally_duration:
                 continue
@@ -2645,11 +2884,13 @@ class MasterCoach:
 
             # Verifica durata minima (dopo estensione)
             duration = end_t - start_t
-            if duration < cfg.min_rally_duration:
+            candidate = Rally(start=start_t, end=end_t, side=side)
+            effective_min = self._get_effective_min_duration(candidate, None, events)
+            if duration < effective_min:
                 # Durata troppo corta dopo estensione: scarta
                 if self.enable_logging:
                     self._log(
-                        f"⚠️ Rally scartato: durata troppo corta ({duration:.2f}s < {cfg.min_rally_duration:.2f}s) "
+                        f"⚠️ Rally scartato: durata troppo corta ({duration:.2f}s < {effective_min:.2f}s) "
                         f"dopo estensione [{start_t:.2f}-{end_t:.2f}s]"
                     )
                 continue
@@ -2670,13 +2911,7 @@ class MasterCoach:
                     break
 
             if not overlaps_previous:
-                rallies.append(
-                    Rally(
-                        start=start_t,
-                        end=end_t,
-                        side=side,
-                    )
-                )
+                rallies.append(candidate)
                 if self.enable_logging:
                     self._log(
                         f"✅ Rally creato: [{start_t:.2f}-{end_t:.2f}s] "
@@ -2942,6 +3177,18 @@ class MasterCoach:
             else:
                 score_events_str = " | score_events=0"
             
+            # Verifica se è un ace (serve forte + whistle rapido)
+            is_ace = False
+            if num_serves == 1 and serves_in_rally:
+                serve = serves_in_rally[0]
+                if serve.confidence >= self.cfg.ace_confidence_threshold:
+                    # Verifica se c'è un whistle entro 6 secondi
+                    if whistles_in_rally:
+                        whistle = whistles_in_rally[0]
+                        ace_duration = whistle.time - serve.time
+                        if 1.5 <= ace_duration <= 6.0:
+                            is_ace = True
+
             # Log dettagliato (voting-based, no serve_count enforcement)
             serve_info = f"serve={num_serves}"
             if serves_in_rally:
@@ -2950,11 +3197,24 @@ class MasterCoach:
                     serve_times_str += "..."
                 serve_info = f"serve={num_serves} ({serve_times_str})"
             
+            # Icona per tipo rally
+            type_icon = "⚡" if is_ace else "🏐"
+            
+            # Formato tempo mm:ss
+            start_str = format_time_short(rally.start)
+            end_str = format_time_short(rally.end)
+            
+            # Chiusura semplificata per ace
+            close_reason = dominant_signal
+            if is_ace:
+                close_reason = "ACE"
+            
             self._log(
-                f"Rally {i:2d}: [{rally.start:7.2f}-{rally.end:7.2f}s] "
-                f"dur={duration:5.2f}s | "
+                f"Rally {i:2d}: [{start_str}-{end_str}] "
+                f"{type_icon} dur={duration:5.1f}s | "
+                f"side={rally.side:5s} | "
                 f"{serve_info} | "
-                f"chiusura={dominant_signal}{score_events_str}"
+                f"{close_reason}{score_events_str}"
             )
 
         self._log("="*80 + "\n")

@@ -141,6 +141,17 @@ VolleyAgents/
 
 ## Note Tecniche
 
+### ScoreboardAgentV3 (OCR LED)
+
+- **Strategia**: preprocessing adattivo per LED (canale rosso/verde, equalizzazione, morfologia), EasyOCR come backend principale, template matching come fallback e detector di cambio frame come ulteriore segnale.
+- **Pipeline**: ROI → preprocessing → EasyOCR → fallback template matching → stabilizzazione temporale → evento `SCORE_CHANGE`.
+- **Configurazione GUI**: in `va_desktop.py` seleziona la ROI del tabellone, abilita la checkbox della lettura tabellone e (opzionale) salva i frame di debug nella cartella di output.
+- **Dipendenze**: installa EasyOCR (trascina con sé PyTorch) prima di lanciare la GUI:
+
+  ```bash
+  pip install easyocr --break-system-packages
+  ```
+
 ### HeadCoach - Regole Attive
 
 **⚠️ Questa configurazione di HeadCoach è quella validata dal test di regressione principale (19/19 rally corretti). Se modifichi queste regole, esegui sempre il test prima di fare commit.**
