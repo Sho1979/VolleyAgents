@@ -255,7 +255,63 @@ class ServeAgent:
 
             prev_gray = curr_gray
 
+        # POST-PROCESS: deduplicazione serve troppo vicini
+        events = self._deduplicate_serves(events)
+
         return events
+
+    def _deduplicate_serves(self, events: List[Event]) -> List[Event]:
+        """
+        Rimuove serve troppo vicini nel tempo, tenendo quello con confidence più alta.
+        Se 2 serve sono a meno di 3 secondi, tiene solo quello con confidence maggiore.
+        """
+        if len(events) <= 1:
+            return events
+        
+        min_gap = 3.0  # secondi minimi tra serve consecutivi
+        
+        # Ordina per tempo
+        sorted_events = sorted(events, key=lambda e: e.time)
+        
+        # Deduplicazione: per ogni gruppo di serve troppo vicini, tieni il migliore
+        filtered: List[Event] = []
+        i = 0
+        
+        while i < len(sorted_events):
+            # Raccogli tutti i serve nel gruppo (entro min_gap l'uno dall'altro)
+            group = [sorted_events[i]]
+            j = i + 1
+            
+            while j < len(sorted_events):
+                # Se questo serve è troppo vicino all'ultimo del gruppo
+                if sorted_events[j].time - group[-1].time < min_gap:
+                    group.append(sorted_events[j])
+                    j += 1
+                else:
+                    break
+            
+            # Tieni SOLO quello con confidence più alta nel gruppo
+            best = max(group, key=lambda e: e.confidence)
+            filtered.append(best)
+            
+            # Log serve scartati
+            if len(group) > 1:
+                for d in group:
+                    if d != best:
+                        self._log(
+                            f"🎯 ServeAgent: SCARTATO serve @ {d.time:.2f}s (conf={d.confidence:.2f}) "
+                            f"- troppo vicino a serve @ {best.time:.2f}s (conf={best.confidence:.2f})"
+                        )
+            
+            i = j
+        
+        if len(filtered) < len(events):
+            self._log(
+                f"🎯 ServeAgent: deduplicazione {len(events)} → {len(filtered)} serve "
+                f"(rimossi {len(events) - len(filtered)} duplicati entro {min_gap:.1f}s)"
+            )
+        
+        return filtered
 
     def _detect_serve(
         self,

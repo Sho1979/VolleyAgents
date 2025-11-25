@@ -98,6 +98,12 @@ class VolleyAgentsApp(tk.Tk):
         self.var_use_scoreboard = tk.BooleanVar(value=False)
         self.scoreboard_main_roi: Optional[Tuple[int, int, int, int]] = None  # (x, y, w, h) - ROI principale del tabellone
 
+        # BallAgent configuration (modello custom YOLOv10)
+        self.var_use_custom_ball_model = tk.BooleanVar(value=False)
+        self.ball_model_path = tk.StringVar(value="")
+        self.ball_class_id = tk.StringVar(value="0")
+        self.ball_confidence = tk.StringVar(value="0.20")
+
         self._build_ui()
 
     # ------------------------
@@ -175,6 +181,43 @@ class VolleyAgentsApp(tk.Tk):
         # Label di stato ROI tabellone
         self.lbl_scoreboard_status = ttk.Label(frm_scoreboard, text="ROI tabellone non configurata")
         self.lbl_scoreboard_status.pack(side="left", padx=10)
+
+        # Sezione BallAgent (modello custom)
+        frm_ball = ttk.LabelFrame(self, text="BallAgent - Modello Custom YOLOv10", padding=10)
+        frm_ball.pack(fill="x", padx=10, pady=5)
+
+        # Checkbox per abilitare modello custom
+        chk_custom_ball = ttk.Checkbutton(
+            frm_ball,
+            text="Usa modello custom (YOLOv10)",
+            variable=self.var_use_custom_ball_model,
+            command=self._on_custom_ball_checkbox_changed
+        )
+        chk_custom_ball.grid(row=0, column=0, sticky="w", padx=5)
+
+        # Path modello
+        ttk.Label(frm_ball, text="Path modello (.pt):").grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        self.entry_ball_model = ttk.Entry(frm_ball, textvariable=self.ball_model_path, width=60)
+        self.entry_ball_model.grid(row=1, column=1, sticky="we", padx=5, pady=2)
+        ttk.Button(frm_ball, text="Sfoglia...", command=self.on_browse_ball_model).grid(row=1, column=2, padx=5, pady=2)
+
+        # Ball class ID
+        ttk.Label(frm_ball, text="Ball class ID:").grid(row=2, column=0, sticky="w", padx=5, pady=2)
+        self.entry_ball_class = ttk.Entry(frm_ball, textvariable=self.ball_class_id, width=10)
+        self.entry_ball_class.grid(row=2, column=1, sticky="w", padx=5, pady=2)
+        ttk.Label(frm_ball, text="(default: 0 per YOLOv10 volleyball)").grid(row=2, column=2, sticky="w", padx=5)
+
+        # Confidence threshold
+        ttk.Label(frm_ball, text="Confidence threshold:").grid(row=3, column=0, sticky="w", padx=5, pady=2)
+        self.entry_ball_conf = ttk.Entry(frm_ball, textvariable=self.ball_confidence, width=10)
+        self.entry_ball_conf.grid(row=3, column=1, sticky="w", padx=5, pady=2)
+        ttk.Label(frm_ball, text="(default: 0.20)").grid(row=3, column=2, sticky="w", padx=5)
+
+        # Configura colonne per espansione
+        frm_ball.columnconfigure(1, weight=1)
+
+        # Disabilita campi inizialmente
+        self._update_custom_ball_ui_state()
 
         # Pulsanti
         frm_buttons = ttk.Frame(self, padding=10)
@@ -312,6 +355,27 @@ class VolleyAgentsApp(tk.Tk):
             self.btn_scoreboard_roi.config(state="normal")
         else:
             self.btn_scoreboard_roi.config(state="disabled")
+
+    def _on_custom_ball_checkbox_changed(self):
+        """Callback quando la checkbox del modello custom cambia stato."""
+        self._update_custom_ball_ui_state()
+
+    def _update_custom_ball_ui_state(self):
+        """Aggiorna lo stato abilitato/disabilitato dei campi modello custom."""
+        enabled = self.var_use_custom_ball_model.get()
+        state = "normal" if enabled else "disabled"
+        self.entry_ball_model.config(state=state)
+        self.entry_ball_class.config(state=state)
+        self.entry_ball_conf.config(state=state)
+
+    def on_browse_ball_model(self):
+        """Apre dialog per selezionare file modello YOLOv10 (.pt)."""
+        path = filedialog.askopenfilename(
+            title="Seleziona modello YOLOv10",
+            filetypes=[("YOLO models", "*.pt"), ("Tutti i file", "*.*")],
+        )
+        if path:
+            self.ball_model_path.set(path)
 
     def _update_scoreboard_status(self):
         """Aggiorna l'etichetta dello stato ROI tabellone."""
@@ -620,10 +684,38 @@ class VolleyAgentsApp(tk.Tk):
                 # 2. Ball Tracking
                 self.log("🏐 BallAgent: tracking palla...")
                 try:
-                    ball_cfg = BallAgentConfig(
-                        enable_logging=True,
-                        log_callback=self.log,
-                    )
+                    # Configurazione modello custom se abilitato
+                    if self.var_use_custom_ball_model.get() and self.ball_model_path.get():
+                        try:
+                            ball_class_id = int(self.ball_class_id.get())
+                        except ValueError:
+                            ball_class_id = 0
+                            self.log(f"  ⚠️ Ball class ID non valido, uso default: {ball_class_id}")
+                        
+                        try:
+                            confidence = float(self.ball_confidence.get())
+                        except ValueError:
+                            confidence = 0.20
+                            self.log(f"  ⚠️ Confidence threshold non valido, uso default: {confidence}")
+                        
+                        ball_cfg = BallAgentConfig(
+                            model_path=self.ball_model_path.get(),
+                            ball_class_id=ball_class_id,
+                            use_custom_ball_class=True,
+                            confidence_threshold=confidence,
+                            enable_logging=True,
+                            log_callback=self.log,
+                        )
+                        self.log(f"  -> Usa modello custom: {self.ball_model_path.get()}")
+                        self.log(f"     Class ID: {ball_class_id}, Confidence: {confidence}")
+                    else:
+                        # Configurazione default (COCO class 32)
+                        ball_cfg = BallAgentConfig(
+                            enable_logging=True,
+                            log_callback=self.log,
+                        )
+                        self.log("  -> Usa modello default (COCO class 32)")
+                    
                     ball_agent = BallAgent(config=ball_cfg)
                     ball_events = ball_agent.run(
                         frames,

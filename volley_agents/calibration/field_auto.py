@@ -24,14 +24,17 @@ from volley_agents.core.event import Event, EventType
 class FieldAutoConfig:
     """Configurazione per auto-calibrazione campo."""
 
-    # Parametri Hough Transform
-    hough_threshold: int = 100
-    hough_min_line_length: int = 100
-    hough_max_line_gap: int = 10
+    # Parametri Hough Transform (ottimizzati per volleyball)
+    hough_threshold: int = 50  # Abbassato da 100 per maggiore sensibilità
+    hough_min_line_length: int = 50  # Abbassato da 100
+    hough_max_line_gap: int = 20  # Aumentato da 10 per linee spezzate
 
     # Parametri Canny edge detection
     canny_low: int = 50
     canny_high: int = 150
+
+    # Fallback detection
+    use_color_fallback: bool = True  # Usa detection basata su colore se Hough fallisce
 
     # Colore linee campo (bianco tipicamente)
     line_color_lower: Tuple[int, int, int] = (200, 200, 200)  # BGR
@@ -62,6 +65,149 @@ class FieldAutoCalibrator:
         self._homography: Optional[np.ndarray] = None
         self._ppm: Optional[float] = None
 
+    def _preprocess_for_lines(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Preprocessing migliorato per rilevare linee bianche su campo colorato.
+
+        Args:
+            frame: Frame BGR da OpenCV
+
+        Returns:
+            Immagine edges binaria
+        """
+        if cv2 is None:
+            return None
+
+        # Converti in HSV per isolare il bianco
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+        # Maschera per linee bianche (alta luminosità, bassa saturazione)
+        lower_white = np.array([0, 0, 180])
+        upper_white = np.array([180, 50, 255])
+        white_mask = cv2.inRange(hsv, lower_white, upper_white)
+
+        # Applica morphology per pulire
+        kernel = np.ones((3, 3), np.uint8)
+        white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
+        white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
+
+        # Edge detection sulla maschera
+        cfg = self.config
+        edges = cv2.Canny(white_mask, cfg.canny_low, cfg.canny_high)
+
+        return edges
+
+    def _detect_court_lines(self, edges: np.ndarray) -> Tuple[List, List]:
+        """
+        Rileva linee del campo con parametri ottimizzati per volleyball.
+
+        Args:
+            edges: Immagine edges binaria
+
+        Returns:
+            (h_lines, v_lines): Liste di linee orizzontali e verticali
+        """
+        if cv2 is None:
+            return [], []
+
+        cfg = self.config
+
+        # Parametri più permissivi
+        lines = cv2.HoughLinesP(
+            edges,
+            rho=1,
+            theta=np.pi / 180,
+            threshold=cfg.hough_threshold,
+            minLineLength=cfg.hough_min_line_length,
+            maxLineGap=cfg.hough_max_line_gap,
+        )
+
+        if lines is None:
+            return [], []
+
+        # Filtra linee per angolo (orizzontali e verticali del campo)
+        h_lines = []
+        v_lines = []
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            angle = np.abs(np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi)
+
+            # Accetta linee quasi orizzontali (0-15° o 165-180°) o quasi verticali (75-105°)
+            if angle < 15 or angle > 165:
+                h_lines.append(line[0])
+            elif 75 < angle < 105:
+                v_lines.append(line[0])
+
+        return h_lines, v_lines
+
+    def _detect_court_by_color(self, frame: np.ndarray) -> Optional[dict]:
+        """
+        Rileva il campo basandosi sul colore (arancione/blu tipico volleyball).
+        Fallback quando Hough Transform fallisce.
+
+        Args:
+            frame: Frame BGR da OpenCV
+
+        Returns:
+            Dict con informazioni campo o None se non trovato
+        """
+        if cv2 is None:
+            return None
+
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        h, w = frame.shape[:2]
+
+        # Range per arancione (campo indoor tipico)
+        lower_orange = np.array([8, 100, 100])
+        upper_orange = np.array([25, 255, 255])
+
+        # Range per blu (altro lato campo)
+        lower_blue = np.array([100, 80, 80])
+        upper_blue = np.array([130, 255, 255])
+
+        mask_orange = cv2.inRange(hsv, lower_orange, upper_orange)
+        mask_blue = cv2.inRange(hsv, lower_blue, upper_blue)
+        mask_court = cv2.bitwise_or(mask_orange, mask_blue)
+
+        # Pulisci la maschera con morphologia
+        kernel = np.ones((10, 10), np.uint8)
+        mask_court = cv2.morphologyEx(mask_court, cv2.MORPH_CLOSE, kernel)
+        mask_court = cv2.morphologyEx(mask_court, cv2.MORPH_OPEN, kernel)
+
+        # Trova contorni
+        contours, _ = cv2.findContours(mask_court, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        if not contours:
+            return None
+
+        # Prendi il contorno più grande (il campo)
+        largest = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(largest)
+
+        # Il campo deve occupare almeno il 30% del frame
+        if area < (h * w * 0.3):
+            return None
+
+        x, y, cw, ch = cv2.boundingRect(largest)
+
+        # La rete è circa al centro orizzontale
+        net_x = x + cw // 2
+
+        print(
+            f"✅ Calibrazione colore: campo trovato @ ({x}, {y}, {cw}x{ch}), net_x={net_x}"
+        )
+
+        return {
+            "court_bounds": (x, y, x + cw, y + ch),
+            "net_x": net_x,
+            "left_zone": {"x1": x, "y1": y, "x2": net_x, "y2": y + ch},
+            "right_zone": {"x1": net_x, "y1": y, "x2": x + cw, "y2": y + ch},
+            "service_left": {"x1": x, "y1": y, "x2": x + cw // 6, "y2": y + ch},
+            "service_right": {"x1": x + cw - cw // 6, "y1": y, "x2": x + cw, "y2": y + ch},
+            "calibration_method": "color_detection",
+            "confidence": 0.7,
+        }
+
     def calibrate(self, frame: np.ndarray) -> List[Event]:
         """
         Calibra il campo da un singolo frame.
@@ -78,27 +224,65 @@ class FieldAutoCalibrator:
         events = []
         cfg = self.config
 
-        # 1. Converti in grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        # 2. Edge detection
-        edges = cv2.Canny(gray, cfg.canny_low, cfg.canny_high)
-
-        # 3. Hough Transform per linee
-        lines = cv2.HoughLinesP(
-            edges,
-            rho=1,
-            theta=np.pi / 180,
-            threshold=cfg.hough_threshold,
-            minLineLength=cfg.hough_min_line_length,
-            maxLineGap=cfg.hough_max_line_gap,
-        )
-
-        if lines is None:
+        # 1. Preprocessing migliorato per linee
+        edges = self._preprocess_for_lines(frame)
+        if edges is None:
+            # Fallback a color detection
+            if cfg.use_color_fallback:
+                print("⚠️ Hough fallito (edges=None), provo color detection...")
+                result = self._detect_court_by_color(frame)
+                if result:
+                    events.append(
+                        Event(
+                            time=0.0,
+                            type=EventType.FIELD_LINES_DETECTED,
+                            confidence=result.get("confidence", 0.6),
+                            extra={
+                                "h_lines": 0,
+                                "v_lines": 0,
+                                "calibration_method": result.get("calibration_method", "color_fallback"),
+                                "net_x": result["net_x"],
+                                "court_bounds": result["court_bounds"],
+                            },
+                        )
+                    )
+                    return events
+                else:
+                    # Ultimo fallback: preset
+                    print("⚠️ Calibrazione campo fallita, uso preset")
             return events
 
-        # 4. Filtra linee (orizzontali e verticali)
-        h_lines, v_lines = self._filter_lines(lines)
+        # 2. Hough Transform per linee
+        h_lines, v_lines = self._detect_court_lines(edges)
+
+        # 3. Se non abbastanza linee, prova fallback
+        if len(h_lines) < 2 or len(v_lines) < 2:
+            if cfg.use_color_fallback:
+                print(
+                    f"⚠️ Hough fallito (linee insufficienti: {len(h_lines)}H/{len(v_lines)}V), "
+                    "provo color detection..."
+                )
+                result = self._detect_court_by_color(frame)
+                if result:
+                    events.append(
+                        Event(
+                            time=0.0,
+                            type=EventType.FIELD_LINES_DETECTED,
+                            confidence=result.get("confidence", 0.6),
+                            extra={
+                                "h_lines": len(h_lines),
+                                "v_lines": len(v_lines),
+                                "calibration_method": result.get("calibration_method", "color_fallback"),
+                                "net_x": result["net_x"],
+                                "court_bounds": result["court_bounds"],
+                            },
+                        )
+                    )
+                    return events
+
+            # Ultimo fallback: preset
+            print("⚠️ Calibrazione campo fallita, uso preset")
+            return events
 
         events.append(
             Event(

@@ -15,6 +15,12 @@ import numpy as np
 from volley_agents.core.event import Event, EventType
 from volley_agents.agents.motion_agent import FrameSample
 
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
+
 if TYPE_CHECKING:
     from volley_agents.core.timeline import Timeline
     from volley_agents.calibration.field_auto import FieldAutoCalibrator
@@ -42,7 +48,15 @@ class BallAgentConfig:
     use_custom_ball_class: bool = False  # Se True, usa ball_class_id invece di 32
 
     # Soglie detection
-    confidence_threshold: float = 0.3
+    confidence_threshold: float = 0.15  # Abbassato da 0.3 per migliorare detection rate
+
+    # Miglioramenti detection
+    use_color_fallback: bool = True  # Usa detection basata su colore se YOLO fallisce
+    interpolate_missing: bool = True  # Interpola posizioni mancanti tra detection consecutive
+    interpolation_max_gap: int = 5  # Max frame da interpolare (1 secondo a 5fps)
+    interpolation_max_distance: float = 150.0  # Max pixel di movimento per interpolazione
+    remove_outliers: bool = True  # Rimuove detection anomale (salti impossibili)
+    outlier_velocity_threshold: float = 100.0  # Max velocità px/frame per outlier
 
     # Parametri Kalman Filter per smoothing
     use_kalman: bool = True
@@ -161,6 +175,185 @@ class BallAgent:
             else:
                 print(message)
 
+    def _interpolate_missing_detections(
+        self,
+        detections: dict[int, Tuple[float, float, float]],
+        max_gap: int = 5,
+        max_distance: float = 150.0,
+        confidence_decay: float = 0.7,
+    ) -> dict[int, Tuple[float, float, float]]:
+        """
+        Interpola le posizioni mancanti della palla tra detection consecutive.
+
+        Se la palla è rilevata al frame N e al frame N+3, interpola le posizioni
+        ai frame N+1 e N+2 usando interpolazione lineare.
+
+        Args:
+            detections: Dict {frame_idx: (x, y, confidence)}
+            max_gap: Massimo numero di frame da interpolare (default 5 = 1 secondo a 5fps)
+            max_distance: Massima distanza in pixel tra detection consecutive (evita teleport)
+            confidence_decay: Fattore di riduzione confidence per frame interpolati
+
+        Returns:
+            Dict con detection originali + interpolate
+        """
+        if len(detections) < 2:
+            return detections
+
+        frames = sorted(detections.keys())
+        interpolated = dict(detections)
+        interpolated_count = 0
+
+        for i in range(len(frames) - 1):
+            f1, f2 = frames[i], frames[i + 1]
+            gap = f2 - f1
+
+            # Interpola solo se il gap è ragionevole (1-5 frame)
+            if 1 < gap <= max_gap:
+                x1, y1, conf1 = detections[f1]
+                x2, y2, conf2 = detections[f2]
+
+                # Calcola distanza tra le due detection
+                dist = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
+
+                # Non interpolare se la palla si è "teletrasportata"
+                if dist < max_distance:
+                    for j in range(1, gap):
+                        # Parametro t per interpolazione lineare (0 < t < 1)
+                        t = j / gap
+
+                        # Posizione interpolata
+                        x_interp = int(x1 + t * (x2 - x1))
+                        y_interp = int(y1 + t * (y2 - y1))
+
+                        # Confidence ridotta per frame interpolati
+                        # Più siamo lontani dai punti noti, meno siamo sicuri
+                        base_conf = min(conf1, conf2)
+                        distance_factor = 1.0 - abs(0.5 - t)  # Massimo al centro del gap
+                        conf_interp = base_conf * confidence_decay * (0.8 + 0.2 * distance_factor)
+
+                        interpolated[f1 + j] = (x_interp, y_interp, conf_interp)
+                        interpolated_count += 1
+
+        if interpolated_count > 0:
+            self._log(
+                f"🔮 Interpolati {interpolated_count} frame mancanti "
+                f"({len(detections)} → {len(interpolated)} detection)"
+            )
+
+        return interpolated
+
+    def _detect_ball_by_color(self, frame: np.ndarray) -> Optional[Tuple[int, int, float]]:
+        """
+        Fallback detection basata su colore quando YOLO fallisce.
+        Cerca blob giallo/bianco di dimensione appropriata per una palla.
+
+        Args:
+            frame: Frame BGR da OpenCV
+
+        Returns:
+            (x, y, confidence) o None se non trovato
+        """
+        if not CV2_AVAILABLE:
+            return None
+
+        # Converti in HSV
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+        # Range per palla gialla (volleyball tipico)
+        lower_yellow = np.array([20, 100, 100])
+        upper_yellow = np.array([40, 255, 255])
+
+        # Range per palla bianca
+        lower_white = np.array([0, 0, 200])
+        upper_white = np.array([180, 30, 255])
+
+        mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow)
+        mask_white = cv2.inRange(hsv, lower_white, upper_white)
+        mask = cv2.bitwise_or(mask_yellow, mask_white)
+
+        # Trova contorni
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            # Palla ha area tipica 100-2000 pixel (dipende dalla risoluzione)
+            if 100 < area < 2000:
+                # Verifica circolarità
+                perimeter = cv2.arcLength(cnt, True)
+                if perimeter > 0:
+                    circularity = 4 * np.pi * area / (perimeter ** 2)
+                    if circularity > 0.6:  # Abbastanza circolare
+                        M = cv2.moments(cnt)
+                        if M["m00"] > 0:
+                            cx = int(M["m10"] / M["m00"])
+                            cy = int(M["m01"] / M["m00"])
+                            return (cx, cy, 0.3)  # Confidence bassa per color detection
+
+        return None
+
+    def _remove_outliers(
+        self,
+        detections: dict[int, Tuple[float, float, float]],
+        velocity_threshold: float = 100.0,
+    ) -> dict[int, Tuple[float, float, float]]:
+        """
+        Rimuove detection che sembrano outlier (salti impossibili della palla).
+
+        Args:
+            detections: Dict {frame_idx: (x, y, confidence)}
+            velocity_threshold: Velocità massima in pixel/frame
+
+        Returns:
+            Dict senza outlier
+        """
+        if len(detections) < 3:
+            return detections
+
+        frames = sorted(detections.keys())
+        cleaned = {}
+        removed_count = 0
+
+        for i, frame in enumerate(frames):
+            x, y, conf = detections[frame]
+
+            # Primo e ultimo frame sempre OK
+            if i == 0 or i == len(frames) - 1:
+                cleaned[frame] = (x, y, conf)
+                continue
+
+            # Calcola velocità rispetto al frame precedente e successivo
+            prev_frame = frames[i - 1]
+            next_frame = frames[i + 1]
+
+            x_prev, y_prev, _ = detections[prev_frame]
+            x_next, y_next, _ = detections[next_frame]
+
+            # Distanza dal precedente
+            dist_prev = ((x - x_prev) ** 2 + (y - y_prev) ** 2) ** 0.5
+            frames_diff_prev = frame - prev_frame
+            velocity_prev = dist_prev / frames_diff_prev if frames_diff_prev > 0 else 0
+
+            # Distanza dal successivo
+            dist_next = ((x_next - x) ** 2 + (y_next - y) ** 2) ** 0.5
+            frames_diff_next = next_frame - frame
+            velocity_next = dist_next / frames_diff_next if frames_diff_next > 0 else 0
+
+            # Se entrambe le velocità sono alte, probabilmente è un outlier
+            if velocity_prev > velocity_threshold and velocity_next > velocity_threshold:
+                self._log(
+                    f"⚠️ Outlier rimosso @ frame {frame}: "
+                    f"velocità {velocity_prev:.1f}/{velocity_next:.1f} px/frame"
+                )
+                removed_count += 1
+            else:
+                cleaned[frame] = (x, y, conf)
+
+        if removed_count > 0:
+            self._log(f"🧹 Rimossi {removed_count} outlier")
+
+        return cleaned
+
     def get_zone(self, x: float, y: float, w: int, h: int) -> str:
         """
         Determina la zona della palla nel campo.
@@ -228,6 +421,9 @@ class BallAgent:
         # Determina classe palla da usare
         target_class = self.config.ball_class_id if self.config.use_custom_ball_class else 32
 
+        # Prima passata: raccogli tutte le detection
+        detections: dict[int, Tuple[float, float, float]] = {}  # {frame_idx: (x, y, confidence)}
+
         for idx, frame_sample in enumerate(frames):
             t = frame_sample.time
             frame = frame_sample.frame
@@ -255,6 +451,44 @@ class BallAgent:
                             ball_pos = (cx, cy)
                             ball_conf = conf
                             ball_box = (x1, y1, x2, y2)
+
+            # Fallback a color detection se YOLO non ha trovato nulla
+            if ball_pos is None and self.config.use_color_fallback:
+                color_result = self._detect_ball_by_color(frame)
+                if color_result is not None:
+                    ball_pos = (color_result[0], color_result[1])
+                    ball_conf = color_result[2]
+
+            # Salva detection se trovata
+            if ball_pos is not None:
+                detections[idx] = (ball_pos[0], ball_pos[1], ball_conf)
+
+        # 1. Rimuovi outlier (opzionale)
+        if self.config.remove_outliers:
+            detections = self._remove_outliers(
+                detections, velocity_threshold=self.config.outlier_velocity_threshold
+            )
+
+        # 2. Interpola detection mancanti
+        if self.config.interpolate_missing:
+            detections = self._interpolate_missing_detections(
+                detections,
+                max_gap=self.config.interpolation_max_gap,
+                max_distance=self.config.interpolation_max_distance,
+            )
+
+        # Seconda passata: processa tutte le detection (incluse interpolate) e genera eventi
+        for idx, frame_sample in enumerate(frames):
+            t = frame_sample.time
+            frame = frame_sample.frame
+
+            # Recupera detection (originale o interpolata)
+            ball_pos = None
+            ball_conf = 0.0
+            if idx in detections:
+                x, y, conf = detections[idx]
+                ball_pos = (x, y)
+                ball_conf = conf
 
             # Aggiorna tracker
             tracked_pos = self._tracker.update(ball_pos)
