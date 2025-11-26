@@ -18,8 +18,10 @@ from typing import List, Optional, Tuple
 # Aggiunge la root del progetto a sys.path per evitare problemi di import quando eseguito come script
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+from tkinter import filedialog, messagebox
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
 
 from volley_agents.core.timeline import Timeline
 from volley_agents.core.rally import Rally
@@ -80,11 +82,9 @@ except ImportError:
     cv2 = None
 
 
-class VolleyAgentsApp(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("VolleyAgents Desktop v1 (Multi-Agent Demo)")
-        self.geometry("900x600")
+class VolleyAgentsApp(ttk.Frame):
+    def __init__(self, master):
+        super().__init__(master, padding=15)
 
         self.video_path = tk.StringVar()
         self.audio_path = tk.StringVar()
@@ -109,6 +109,10 @@ class VolleyAgentsApp(tk.Tk):
         self.ball_model_path = tk.StringVar(value="")
         self.ball_class_id = tk.StringVar(value="0")
         self.ball_confidence = tk.StringVar(value="0.20")
+
+        # Progress tracking
+        self.progress_var = tk.DoubleVar(value=0)
+        self.progress_text = tk.StringVar(value="")
 
         self._build_ui()
 
@@ -135,7 +139,7 @@ class VolleyAgentsApp(tk.Tk):
         ttk.Button(frm_top, text="Seleziona...", command=self.on_browse_output).grid(row=2, column=2, padx=5)
 
         # Parametri finestra e fps
-        frm_params = ttk.LabelFrame(self, text="Parametri analisi", padding=10)
+        frm_params = ttk.Labelframe(self, text="Parametri analisi", padding=10)
         frm_params.pack(fill="x", padx=10, pady=5)
 
         ttk.Label(frm_params, text="t_start (mm:ss):").grid(row=0, column=0, sticky="w")
@@ -154,7 +158,7 @@ class VolleyAgentsApp(tk.Tk):
         ttk.Entry(frm_params, textvariable=self.post_roll, width=5).grid(row=0, column=9, sticky="w", padx=5)
 
         # Pulsanti ROI
-        frm_roi = ttk.LabelFrame(self, text="ROI Battuta (zona battuta)", padding=10)
+        frm_roi = ttk.Labelframe(self, text="ROI Battuta (zona battuta)", padding=10)
         frm_roi.pack(fill="x", padx=10, pady=5)
 
         ttk.Button(frm_roi, text="ROI SX", command=self.on_select_roi_left).pack(side="left", padx=5)
@@ -163,7 +167,7 @@ class VolleyAgentsApp(tk.Tk):
         self.lbl_roi_status.pack(side="left", padx=10)
 
         # Sezione Tabellone (Scoreboard)
-        frm_scoreboard = ttk.LabelFrame(self, text="Tabellone (Scoreboard)", padding=10)
+        frm_scoreboard = ttk.Labelframe(self, text="Tabellone (Scoreboard)", padding=10)
         frm_scoreboard.pack(fill="x", padx=10, pady=5)
 
         # Checkbox per abilitare lettura tabellone
@@ -189,7 +193,7 @@ class VolleyAgentsApp(tk.Tk):
         self.lbl_scoreboard_status.pack(side="left", padx=10)
 
         # Sezione BallAgent (modello custom)
-        frm_ball = ttk.LabelFrame(self, text="BallAgent - Modello Custom YOLOv10", padding=10)
+        frm_ball = ttk.Labelframe(self, text="BallAgent - Modello Custom YOLOv10", padding=10)
         frm_ball.pack(fill="x", padx=10, pady=5)
 
         # Checkbox per abilitare modello custom
@@ -236,11 +240,38 @@ class VolleyAgentsApp(tk.Tk):
         frm_buttons = ttk.Frame(self, padding=10)
         frm_buttons.pack(fill="x")
 
-        ttk.Button(frm_buttons, text="Analizza", command=self.on_analyze).pack(side="left", padx=5)
-        ttk.Button(frm_buttons, text="Esporta Rally", command=self.on_export_rallies).pack(side="left", padx=5)
+        ttk.Button(
+            frm_buttons,
+            text="Analizza",
+            command=self.on_analyze,
+            bootstyle="success",
+        ).pack(side="left", padx=5)
+        ttk.Button(
+            frm_buttons,
+            text="Esporta Rally",
+            command=self.on_export_rallies,
+            bootstyle="info",
+        ).pack(side="left", padx=5)
+
+        # Progress bar section
+        frm_progress = ttk.Frame(self)
+        frm_progress.pack(fill="x", padx=10, pady=5)
+
+        self.progress_label = ttk.Label(frm_progress, textvariable=self.progress_text)
+        self.progress_label.pack(anchor="w")
+
+        self.progress_bar = ttk.Progressbar(
+            frm_progress,
+            variable=self.progress_var,
+            maximum=100,
+            mode="determinate",
+            length=400,
+            bootstyle="success-striped",
+        )
+        self.progress_bar.pack(fill="x", pady=2)
 
         # Log + lista rally
-        frm_main = ttk.PanedWindow(self, orient="horizontal")
+        frm_main = ttk.Panedwindow(self, orient="horizontal")
         frm_main.pack(fill="both", expand=True, padx=10, pady=10)
 
         # Text log
@@ -260,6 +291,13 @@ class VolleyAgentsApp(tk.Tk):
     def log(self, msg: str):
         self.txt_log.insert("end", msg + "\n")
         self.txt_log.see("end")
+        self.update_idletasks()
+
+    def update_progress(self, value: float, text: str = ""):
+        """Aggiorna progress bar e testo."""
+        self.progress_var.set(value)
+        if text:
+            self.progress_text.set(text)
         self.update_idletasks()
 
     # ------------------------
@@ -550,6 +588,7 @@ class VolleyAgentsApp(tk.Tk):
             f"{format_time_precise(analysis_start)}–{format_time_precise(analysis_end)} "
             f"(visibile: {format_time_precise(t_start)}–{format_time_precise(t_end)})"
         )
+        self.update_progress(0, "🎵 Analisi audio...")
 
         timeline = Timeline()
 
@@ -565,6 +604,7 @@ class VolleyAgentsApp(tk.Tk):
             self.log(f"  -> {len(audio_events)} eventi whistle nella finestra allargata.")
         except Exception as e:
             self.log(f"  !! Errore AudioAgent: {e}")
+        self.update_progress(15, "🎬 Analisi motion...")
 
         # Motion Agent
         self.log("🎬 MotionAgent: analisi motion SX/DX...")
@@ -579,6 +619,7 @@ class VolleyAgentsApp(tk.Tk):
                 self.log(f"  -> Frame campionati: {len(frames)}")
                 motion_events = motion_agent.run(frames, timeline=timeline)
                 self.log(f"  -> {len(motion_events)} eventi motion (hit/gap).")
+                self.update_progress(30, "🎯 Analisi serve...")
 
                 # ServeAgent: rilevazione battute nella zona battuta (ROI SX/DX)
                 if self.roi_left is not None or self.roi_right is not None:
@@ -602,6 +643,7 @@ class VolleyAgentsApp(tk.Tk):
                         self.log(f"  !! Errore ServeAgent: {e}")
                 else:
                     self.log("🎯 ServeAgent: disattivato (ROI SX/DX non definite).")
+                self.update_progress(45, "🤲 Analisi tocchi...")
 
                 # TouchSequenceAgent: analisi sequenze di tocchi (ricezione -> palleggio -> attacco)
                 self.log("🤲 TouchSequenceAgent: analisi sequenze tocchi...")
@@ -612,6 +654,7 @@ class VolleyAgentsApp(tk.Tk):
                     self.log(f"  -> {len(touch_events)} tocchi dettagliati (reception/set/attack).")
                 except Exception as e:
                     self.log(f"  !! Errore TouchSequenceAgent: {e}")
+                self.update_progress(55, "📊 Analisi scoreboard...")
 
                 # ScoreboardAgentV3: lettura punteggio dal tabellone LED
                 if self.var_use_scoreboard.get():
@@ -668,6 +711,7 @@ class VolleyAgentsApp(tk.Tk):
                             self.log(traceback.format_exc())
                 else:
                     self.log("📊 ScoreboardAgentV3: disattivato (lettura tabellone non abilitata).")
+                self.update_progress(65, "📐 Calibrazione campo...")
 
                 # ========================
                 # NUOVI AGENTI CV
@@ -693,6 +737,7 @@ class VolleyAgentsApp(tk.Tk):
                         import traceback
                         self.log(traceback.format_exc())
                         field_calibrator = None
+                self.update_progress(75, "🏐 Ball tracking...")
 
                 # 2. Ball Tracking
                 self.log("🏐 BallAgent: tracking palla...")
@@ -750,6 +795,7 @@ class VolleyAgentsApp(tk.Tk):
                     self.log(f"  !! Errore BallAgent: {e}")
                     import traceback
                     self.log(traceback.format_exc())
+                self.update_progress(85, "🧠 MasterCoach analysis...")
 
             except Exception as e:
                 self.log(f"  !! Errore MotionAgent: {e}")
@@ -794,6 +840,7 @@ class VolleyAgentsApp(tk.Tk):
 
         self.log(f"  -> {len(all_rallies)} rally trovati (finestra allargata), {len(self.rallies)} visibili nella finestra [{t_start:.2f}–{t_end:.2f}s].")
         self._refresh_rally_list()
+        self.update_progress(100, "✅ Analisi completata!")
 
     def _refresh_rally_list(self):
         self.lst_rallies.delete(0, "end")
@@ -942,6 +989,13 @@ def load_video_frames(
 
 
 if __name__ == "__main__":
-    app = VolleyAgentsApp()
-    app.mainloop()
+    root = ttk.Window(
+        title="VolleyAgents Desktop v2",
+        themename="superhero",  # Tema scuro moderno (alternative: darkly, cyborg, solar, vapor)
+        size=(1400, 900),
+        resizable=(True, True),
+    )
+    app = VolleyAgentsApp(root)
+    app.pack(fill="both", expand=True)
+    root.mainloop()
 
