@@ -110,13 +110,23 @@ class GameStateAgent:
         return processed
 
     def _select_frames(self, frames: List[np.ndarray]) -> List[np.ndarray]:
-        """Seleziona num_frames uniformemente."""
+        """Seleziona esattamente num_frames uniformemente, con padding se necessario."""
 
-        if len(frames) <= self.config.num_frames:
-            return frames
+        target = self.config.num_frames  # 16
 
-        step = len(frames) / self.config.num_frames
-        return [frames[int(i * step)] for i in range(self.config.num_frames)]
+        if len(frames) == 0:
+            return []
+
+        if len(frames) >= target:
+            # Subsample uniformemente
+            step = len(frames) / target
+            return [frames[int(i * step)] for i in range(target)]
+
+        # Pad ripetendo l'ultimo frame
+        selected = frames.copy()
+        while len(selected) < target:
+            selected.append(frames[-1])
+        return selected
 
     def classify_segment(self, frames: List[np.ndarray]) -> GameStateResult:
         """
