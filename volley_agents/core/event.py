@@ -61,6 +61,9 @@ class EventType(str, Enum):
     BALL_CROSS_NET = "ball_cross_net"         # palla attraversa rete
     BALL_SERVE = "ball_serve"                 # palla servita (conferma)
 
+    # Eventi stato partita
+    GAME_STATE = "game_state"           # stato partita (play/no-play/service)
+
 
 @dataclass
 class Event:
