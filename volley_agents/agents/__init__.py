@@ -5,6 +5,7 @@ from volley_agents.agents.scoreboard_v3 import (
     ScoreboardConfigV3,
     create_digit_templates,
 )
+from volley_agents.agents.ball_agent_v2 import BallAgentV2, BallAgentV2Config
 
 __all__ = [
     "ScoreboardAgentV2",
@@ -12,5 +13,6 @@ __all__ = [
     "ScoreboardAgentV3",
     "ScoreboardConfigV3",
     "create_digit_templates",
+    "BallAgentV2",
+    "BallAgentV2Config",
 ]
-
