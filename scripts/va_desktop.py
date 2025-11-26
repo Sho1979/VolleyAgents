@@ -11,8 +11,12 @@ VolleyAgents Desktop GUI (prototipo)
 import json
 import subprocess
 import threading
+import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
+
+# Aggiunge la root del progetto a sys.path per evitare problemi di import quando eseguito come script
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -35,6 +39,7 @@ from volley_agents.io.config import (
 )
 from volley_agents.calibration.field_auto import FieldAutoCalibrator, FieldAutoConfig
 from volley_agents.agents.ball_agent import BallAgent, BallAgentConfig
+from volley_agents.agents.ball_agent_v2 import BallAgentV2, BallAgentV2Config
 
 # =============================================================================
 # HELPER: Conversione tempo mm:ss <-> secondi
@@ -100,6 +105,7 @@ class VolleyAgentsApp(tk.Tk):
 
         # BallAgent configuration (modello custom YOLOv10)
         self.var_use_custom_ball_model = tk.BooleanVar(value=False)
+        self.var_use_ball_v2 = tk.BooleanVar(value=True)  # Default: usa ONNX V2
         self.ball_model_path = tk.StringVar(value="")
         self.ball_class_id = tk.StringVar(value="0")
         self.ball_confidence = tk.StringVar(value="0.20")
@@ -194,6 +200,13 @@ class VolleyAgentsApp(tk.Tk):
             command=self._on_custom_ball_checkbox_changed
         )
         chk_custom_ball.grid(row=0, column=0, sticky="w", padx=5)
+
+        chk_ball_v2 = ttk.Checkbutton(
+            frm_ball,
+            text="Usa BallAgentV2 (ONNX 88%)",
+            variable=self.var_use_ball_v2,
+        )
+        chk_ball_v2.grid(row=0, column=1, sticky="w", padx=5)
 
         # Path modello
         ttk.Label(frm_ball, text="Path modello (.pt):").grid(row=1, column=0, sticky="w", padx=5, pady=2)
@@ -684,44 +697,54 @@ class VolleyAgentsApp(tk.Tk):
                 # 2. Ball Tracking
                 self.log("🏐 BallAgent: tracking palla...")
                 try:
-                    # Configurazione modello custom se abilitato
-                    if self.var_use_custom_ball_model.get() and self.ball_model_path.get():
-                        try:
-                            ball_class_id = int(self.ball_class_id.get())
-                        except ValueError:
-                            ball_class_id = 0
-                            self.log(f"  ⚠️ Ball class ID non valido, uso default: {ball_class_id}")
-                        
-                        try:
-                            confidence = float(self.ball_confidence.get())
-                        except ValueError:
-                            confidence = 0.20
-                            self.log(f"  ⚠️ Confidence threshold non valido, uso default: {confidence}")
-                        
-                        ball_cfg = BallAgentConfig(
-                            model_path=self.ball_model_path.get(),
-                            ball_class_id=ball_class_id,
-                            use_custom_ball_class=True,
-                            confidence_threshold=confidence,
+                    if self.var_use_ball_v2.get():
+                        # Usa BallAgentV2 (ONNX)
+                        ball_cfg = BallAgentV2Config(
                             enable_logging=True,
                             log_callback=self.log,
                         )
-                        self.log(f"  -> Usa modello custom: {self.ball_model_path.get()}")
-                        self.log(f"     Class ID: {ball_class_id}, Confidence: {confidence}")
+                        self.log("  -> Usa BallAgentV2 (ONNX - 88% detection)")
+                        ball_agent = BallAgentV2(config=ball_cfg)
+                        ball_events = ball_agent.run(frames, timeline=timeline)
                     else:
-                        # Configurazione default (COCO class 32)
-                        ball_cfg = BallAgentConfig(
-                            enable_logging=True,
-                            log_callback=self.log,
+                        # Configurazione modello custom se abilitato
+                        if self.var_use_custom_ball_model.get() and self.ball_model_path.get():
+                            try:
+                                ball_class_id = int(self.ball_class_id.get())
+                            except ValueError:
+                                ball_class_id = 0
+                                self.log(f"  ⚠️ Ball class ID non valido, uso default: {ball_class_id}")
+                            
+                            try:
+                                confidence = float(self.ball_confidence.get())
+                            except ValueError:
+                                confidence = 0.20
+                                self.log(f"  ⚠️ Confidence threshold non valido, uso default: {confidence}")
+                            
+                            ball_cfg = BallAgentConfig(
+                                model_path=self.ball_model_path.get(),
+                                ball_class_id=ball_class_id,
+                                use_custom_ball_class=True,
+                                confidence_threshold=confidence,
+                                enable_logging=True,
+                                log_callback=self.log,
+                            )
+                            self.log(f"  -> Usa modello custom: {self.ball_model_path.get()}")
+                            self.log(f"     Class ID: {ball_class_id}, Confidence: {confidence}")
+                        else:
+                            # Configurazione default (COCO class 32)
+                            ball_cfg = BallAgentConfig(
+                                enable_logging=True,
+                                log_callback=self.log,
+                            )
+                            self.log("  -> Usa modello default (COCO class 32)")
+                        
+                        ball_agent = BallAgent(config=ball_cfg)
+                        ball_events = ball_agent.run(
+                            frames,
+                            timeline=timeline,
+                            field_calibrator=field_calibrator,
                         )
-                        self.log("  -> Usa modello default (COCO class 32)")
-                    
-                    ball_agent = BallAgent(config=ball_cfg)
-                    ball_events = ball_agent.run(
-                        frames,
-                        timeline=timeline,
-                        field_calibrator=field_calibrator,
-                    )
                     self.log(f"  -> {len(ball_events)} eventi palla rilevati.")
                 except Exception as e:
                     self.log(f"  !! Errore BallAgent: {e}")
