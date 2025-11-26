@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
+from ttkbootstrap.scrolled import ScrolledFrame
 from tkinter import filedialog, messagebox
 import tkinter as tk
 
@@ -42,6 +43,7 @@ from volley_agents.io.config import (
 from volley_agents.calibration.field_auto import FieldAutoCalibrator, FieldAutoConfig
 from volley_agents.agents.ball_agent import BallAgent, BallAgentConfig
 from volley_agents.agents.ball_agent_v2 import BallAgentV2, BallAgentV2Config
+from volley_agents.agents.game_state_agent import GameStateAgent, GameStateAgentConfig
 
 # =============================================================================
 # HELPER: Conversione tempo mm:ss <-> secondi
@@ -106,6 +108,7 @@ class VolleyAgentsApp(ttk.Frame):
         # BallAgent configuration (modello custom YOLOv10)
         self.var_use_custom_ball_model = tk.BooleanVar(value=False)
         self.var_use_ball_v2 = tk.BooleanVar(value=True)  # Default: usa ONNX V2
+        self.var_use_game_state = tk.BooleanVar(value=True)  # GameStateAgent (VideoMAE)
         self.ball_model_path = tk.StringVar(value="")
         self.ball_class_id = tk.StringVar(value="0")
         self.ball_confidence = tk.StringVar(value="0.20")
@@ -115,12 +118,33 @@ class VolleyAgentsApp(ttk.Frame):
         self.progress_text = tk.StringVar(value="")
 
         self._build_ui()
+        self.report_data = None  # Dati report dopo analisi
 
     # ------------------------
     # UI
     # ------------------------
     def _build_ui(self):
-        frm_top = ttk.Frame(self, padding=10)
+        self.pack(fill="both", expand=True)
+
+        # ========== NOTEBOOK (Sistema Tab) ==========
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Tab 1: Analisi
+        self.tab_analisi = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(self.tab_analisi, text="🎬 Analisi")
+
+        # Tab 2: Report
+        self.tab_report = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(self.tab_report, text="📊 Report")
+
+        # Costruisci contenuto tab
+        self._build_tab_analisi()
+        self._build_tab_report()
+
+    def _build_tab_analisi(self):
+        """Costruisce la tab Analisi (interfaccia esistente)."""
+        frm_top = ttk.Frame(self.tab_analisi, padding=10)
         frm_top.pack(fill="x")
 
         # Riga Video
@@ -139,7 +163,7 @@ class VolleyAgentsApp(ttk.Frame):
         ttk.Button(frm_top, text="Seleziona...", command=self.on_browse_output).grid(row=2, column=2, padx=5)
 
         # Parametri finestra e fps
-        frm_params = ttk.Labelframe(self, text="Parametri analisi", padding=10)
+        frm_params = ttk.Labelframe(self.tab_analisi, text="Parametri analisi", padding=10)
         frm_params.pack(fill="x", padx=10, pady=5)
 
         ttk.Label(frm_params, text="t_start (mm:ss):").grid(row=0, column=0, sticky="w")
@@ -158,7 +182,7 @@ class VolleyAgentsApp(ttk.Frame):
         ttk.Entry(frm_params, textvariable=self.post_roll, width=5).grid(row=0, column=9, sticky="w", padx=5)
 
         # Pulsanti ROI
-        frm_roi = ttk.Labelframe(self, text="ROI Battuta (zona battuta)", padding=10)
+        frm_roi = ttk.Labelframe(self.tab_analisi, text="ROI Battuta (zona battuta)", padding=10)
         frm_roi.pack(fill="x", padx=10, pady=5)
 
         ttk.Button(frm_roi, text="ROI SX", command=self.on_select_roi_left).pack(side="left", padx=5)
@@ -167,7 +191,7 @@ class VolleyAgentsApp(ttk.Frame):
         self.lbl_roi_status.pack(side="left", padx=10)
 
         # Sezione Tabellone (Scoreboard)
-        frm_scoreboard = ttk.Labelframe(self, text="Tabellone (Scoreboard)", padding=10)
+        frm_scoreboard = ttk.Labelframe(self.tab_analisi, text="Tabellone (Scoreboard)", padding=10)
         frm_scoreboard.pack(fill="x", padx=10, pady=5)
 
         # Checkbox per abilitare lettura tabellone
@@ -193,7 +217,7 @@ class VolleyAgentsApp(ttk.Frame):
         self.lbl_scoreboard_status.pack(side="left", padx=10)
 
         # Sezione BallAgent (modello custom)
-        frm_ball = ttk.Labelframe(self, text="BallAgent - Modello Custom YOLOv10", padding=10)
+        frm_ball = ttk.Labelframe(self.tab_analisi, text="BallAgent - Modello Custom YOLOv10", padding=10)
         frm_ball.pack(fill="x", padx=10, pady=5)
 
         # Checkbox per abilitare modello custom
@@ -236,8 +260,24 @@ class VolleyAgentsApp(ttk.Frame):
         # Disabilita campi inizialmente
         self._update_custom_ball_ui_state()
 
+        # Sezione GameStateAgent
+        frm_game_state = ttk.Labelframe(self.tab_analisi, text="GameStateAgent - Classificazione VideoMAE", padding=10)
+        frm_game_state.pack(fill="x", padx=10, pady=5)
+
+        chk_game_state = ttk.Checkbutton(
+            frm_game_state,
+            text="Abilita GameStateAgent (PLAY/NO-PLAY/SERVICE)",
+            variable=self.var_use_game_state,
+        )
+        chk_game_state.pack(anchor="w")
+
+        ttk.Label(
+            frm_game_state,
+            text="⚡ Classificazione automatica stato partita con VideoMAE (100% accuracy)",
+        ).pack(anchor="w")
+
         # Pulsanti
-        frm_buttons = ttk.Frame(self, padding=10)
+        frm_buttons = ttk.Frame(self.tab_analisi, padding=10)
         frm_buttons.pack(fill="x")
 
         ttk.Button(
@@ -254,7 +294,7 @@ class VolleyAgentsApp(ttk.Frame):
         ).pack(side="left", padx=5)
 
         # Progress bar section
-        frm_progress = ttk.Frame(self)
+        frm_progress = ttk.Frame(self.tab_analisi)
         frm_progress.pack(fill="x", padx=10, pady=5)
 
         self.progress_label = ttk.Label(frm_progress, textvariable=self.progress_text)
@@ -270,28 +310,320 @@ class VolleyAgentsApp(ttk.Frame):
         )
         self.progress_bar.pack(fill="x", pady=2)
 
-        # Log + lista rally
-        frm_main = ttk.Panedwindow(self, orient="horizontal")
+        # ========== PANNELLO PRINCIPALE LOG + RALLY ==========
+        # Frame contenitore che si espande
+        frm_main = ttk.Frame(self.tab_analisi)
         frm_main.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Text log
-        frm_log = ttk.Frame(frm_main)
-        frm_main.add(frm_log, weight=1)
-        ttk.Label(frm_log, text="Log").pack(anchor="w")
-        self.txt_log = tk.Text(frm_log, height=20)
-        self.txt_log.pack(fill="both", expand=True)
+        # Configura grid con 2 colonne
+        frm_main.columnconfigure(0, weight=3)  # Log più largo
+        frm_main.columnconfigure(1, weight=2)  # Rally
+        frm_main.rowconfigure(0, weight=1)     # Si espande verticalmente
 
-        # Lista rally
-        frm_rallies = ttk.Frame(frm_main)
-        frm_main.add(frm_rallies, weight=1)
-        ttk.Label(frm_rallies, text="Rally trovati").pack(anchor="w")
-        self.lst_rallies = tk.Listbox(frm_rallies)
-        self.lst_rallies.pack(fill="both", expand=True)
+        # ========== PANNELLO LOG (sinistra) ==========
+        frm_log = ttk.Labelframe(frm_main, text="📋 Log Analisi", padding=8)
+        frm_log.grid(row=0, column=0, sticky="nsew", padx=(0, 5), pady=0)
+
+        # Configura espansione interna
+        frm_log.columnconfigure(0, weight=1)
+        frm_log.rowconfigure(0, weight=1)
+
+        # Frame per Text + Scrollbars
+        log_container = ttk.Frame(frm_log)
+        log_container.grid(row=0, column=0, sticky="nsew")
+        log_container.columnconfigure(0, weight=1)
+        log_container.rowconfigure(0, weight=1)
+
+        # Text widget
+        self.txt_log = tk.Text(
+            log_container,
+            wrap="none",
+            font=("Consolas", 10),
+            bg="#1a1a2e",
+            fg="#00ff00",
+            insertbackground="white",
+        )
+        self.txt_log.grid(row=0, column=0, sticky="nsew")
+
+        # Scrollbar verticale
+        log_scroll_y = ttk.Scrollbar(log_container, orient="vertical", command=self.txt_log.yview)
+        log_scroll_y.grid(row=0, column=1, sticky="ns")
+        self.txt_log.config(yscrollcommand=log_scroll_y.set)
+
+        # Scrollbar orizzontale
+        log_scroll_x = ttk.Scrollbar(log_container, orient="horizontal", command=self.txt_log.xview)
+        log_scroll_x.grid(row=1, column=0, sticky="ew")
+        self.txt_log.config(xscrollcommand=log_scroll_x.set)
+
+        # ========== PANNELLO RALLY (destra) ==========
+        frm_rallies = ttk.Labelframe(frm_main, text="🏐 Rally Trovati", padding=8)
+        frm_rallies.grid(row=0, column=1, sticky="nsew", padx=(5, 0), pady=0)
+
+        # Configura espansione interna
+        frm_rallies.columnconfigure(0, weight=1)
+        frm_rallies.rowconfigure(0, weight=1)
+
+        # Frame per Listbox + Scrollbar
+        rally_container = ttk.Frame(frm_rallies)
+        rally_container.grid(row=0, column=0, sticky="nsew")
+        rally_container.columnconfigure(0, weight=1)
+        rally_container.rowconfigure(0, weight=1)
+
+        # Listbox
+        self.lst_rallies = tk.Listbox(
+            rally_container,
+            font=("Segoe UI", 11),
+            bg="#16213e",
+            fg="#ffffff",
+            selectbackground="#0078d4",
+            selectforeground="#ffffff",
+        )
+        self.lst_rallies.grid(row=0, column=0, sticky="nsew")
+
+        # Scrollbar verticale
+        rally_scroll = ttk.Scrollbar(rally_container, orient="vertical", command=self.lst_rallies.yview)
+        rally_scroll.grid(row=0, column=1, sticky="ns")
+        self.lst_rallies.config(yscrollcommand=rally_scroll.set)
+
+        # Doppio click per dettagli
+        self.lst_rallies.bind("<Double-Button-1>", self._on_rally_double_click)
+
+        # Configura colori log
+        self._setup_log_tags()
+
+    def _build_tab_report(self):
+        """Costruisce la tab Report con statistiche."""
+
+        # Frame scrollabile per il report
+        scroll_frame = ScrolledFrame(self.tab_report, autohide=True)
+        scroll_frame.pack(fill="both", expand=True)
+
+        self.report_container = scroll_frame
+
+        # Header
+        header_frame = ttk.Frame(scroll_frame)
+        header_frame.pack(fill="x", pady=(0, 20))
+
+        ttk.Label(
+            header_frame,
+            text="📊 Report Partita",
+            font=("Segoe UI", 24, "bold"),
+        ).pack(anchor="w")
+
+        self.lbl_report_status = ttk.Label(
+            header_frame,
+            text="⏳ Esegui un'analisi per vedere il report",
+            font=("Segoe UI", 12),
+        )
+        self.lbl_report_status.pack(anchor="w", pady=5)
+
+        # Container per le statistiche (inizialmente vuoto)
+        self.stats_frame = ttk.Frame(scroll_frame)
+        self.stats_frame.pack(fill="both", expand=True)
+
+        # Messaggio iniziale
+        self.lbl_no_data = ttk.Label(
+            self.stats_frame,
+            text="Nessun dato disponibile.\n\nVai alla tab 'Analisi' ed esegui un'analisi video.",
+            font=("Segoe UI", 14),
+            justify="center",
+        )
+        self.lbl_no_data.pack(expand=True, pady=50)
+
+        # Pulsante esporta
+        btn_frame = ttk.Frame(header_frame)
+        btn_frame.pack(anchor="e", pady=5)
+
+        ttk.Button(
+            btn_frame,
+            text="📄 Esporta HTML",
+            command=self._export_html_report,
+            bootstyle="info",
+        ).pack(side="left", padx=5)
+
+    def _update_report_tab(self):
+        """Aggiorna la tab Report con i dati dei rally."""
+        if not self.rallies:
+            return
+
+        # Pulisci stats_frame
+        for widget in self.stats_frame.winfo_children():
+            widget.destroy()
+
+        # Calcola statistiche
+        durations = [r.end - r.start for r in self.rallies]
+        left_count = sum(1 for r in self.rallies if r.side == "left")
+        right_count = sum(1 for r in self.rallies if r.side == "right")
+        long_rallies = [d for d in durations if d > 15]
+        quick_points = [d for d in durations if d < 5]
+
+        # Aggiorna status
+        self.lbl_report_status.config(
+            text=f"✅ Analisi completata - {len(self.rallies)} rally trovati"
+        )
+
+        # ========== SEZIONE RIEPILOGO ==========
+        summary_frame = ttk.Labelframe(self.stats_frame, text="📈 Riepilogo", padding=15)
+        summary_frame.pack(fill="x", pady=10)
+
+        # Grid per le statistiche principali
+        stats_grid = ttk.Frame(summary_frame)
+        stats_grid.pack(fill="x")
+
+        stats = [
+            ("🏐 Rally Totali", str(len(self.rallies))),
+            ("⏱️ Durata Totale", f"{sum(durations):.1f}s ({sum(durations)/60:.1f} min)"),
+            ("📊 Durata Media", f"{sum(durations)/len(durations):.1f}s"),
+            ("🔥 Rally Più Lungo", f"{max(durations):.1f}s"),
+            ("⚡ Rally Più Corto", f"{min(durations):.1f}s"),
+        ]
+
+        for i, (label, value) in enumerate(stats):
+            col = i % 3
+            row = i // 3
+
+            stat_frame = ttk.Frame(stats_grid)
+            stat_frame.grid(row=row, column=col, padx=20, pady=10, sticky="w")
+
+            ttk.Label(stat_frame, text=label, font=("Segoe UI", 10)).pack(anchor="w")
+            ttk.Label(stat_frame, text=value, font=("Segoe UI", 18, "bold")).pack(anchor="w")
+
+        # ========== SEZIONE BATTUTE ==========
+        serve_frame = ttk.Labelframe(self.stats_frame, text="🏐 Statistiche Battuta", padding=15)
+        serve_frame.pack(fill="x", pady=10)
+
+        serve_grid = ttk.Frame(serve_frame)
+        serve_grid.pack(fill="x")
+
+        # LEFT
+        left_frame = ttk.Frame(serve_grid)
+        left_frame.pack(side="left", expand=True, padx=20)
+        ttk.Label(left_frame, text="⬅️ LEFT", font=("Segoe UI", 12)).pack()
+        ttk.Label(left_frame, text=str(left_count), font=("Segoe UI", 36, "bold")).pack()
+        ttk.Label(left_frame, text="battute", font=("Segoe UI", 10)).pack()
+
+        # VS
+        ttk.Label(serve_grid, text="vs", font=("Segoe UI", 14)).pack(side="left", padx=20)
+
+        # RIGHT
+        right_frame = ttk.Frame(serve_grid)
+        right_frame.pack(side="left", expand=True, padx=20)
+        ttk.Label(right_frame, text="➡️ RIGHT", font=("Segoe UI", 12)).pack()
+        ttk.Label(right_frame, text=str(right_count), font=("Segoe UI", 36, "bold")).pack()
+        ttk.Label(right_frame, text="battute", font=("Segoe UI", 10)).pack()
+
+        # ========== SEZIONE EVENTI SPECIALI ==========
+        events_frame = ttk.Labelframe(self.stats_frame, text="⭐ Eventi Speciali", padding=15)
+        events_frame.pack(fill="x", pady=10)
+
+        events_grid = ttk.Frame(events_frame)
+        events_grid.pack(fill="x")
+
+        ttk.Label(
+            events_grid,
+            text=f"🔥 Rally Lunghi (>15s): {len(long_rallies)}",
+            font=("Segoe UI", 12),
+        ).pack(side="left", padx=20)
+        ttk.Label(
+            events_grid,
+            text=f"⚡ Punti Rapidi (<5s): {len(quick_points)}",
+            font=("Segoe UI", 12),
+        ).pack(side="left", padx=20)
+
+        # ========== SEZIONE DETTAGLIO RALLY ==========
+        detail_frame = ttk.Labelframe(self.stats_frame, text="📋 Dettaglio Rally", padding=15)
+        detail_frame.pack(fill="both", expand=True, pady=10)
+
+        # Intestazione tabella
+        header = ttk.Frame(detail_frame)
+        header.pack(fill="x", pady=(0, 5))
+
+        ttk.Label(header, text="#", width=5, font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Label(header, text="Side", width=8, font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Label(header, text="Inizio", width=10, font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Label(header, text="Fine", width=10, font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Label(header, text="Durata", width=10, font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Label(header, text="Tag", width=15, font=("Segoe UI", 10, "bold")).pack(side="left")
+
+        ttk.Separator(detail_frame, orient="horizontal").pack(fill="x", pady=5)
+
+        # Righe rally
+        for i, r in enumerate(self.rallies, 1):
+            dur = r.end - r.start
+            side_icon = "⬅️" if r.side == "left" else "➡️" if r.side == "right" else "❓"
+
+            tags = []
+            if dur > 15:
+                tags.append("🔥")
+            if dur < 5:
+                tags.append("⚡")
+
+            start_fmt = f"{int(r.start//60)}:{int(r.start%60):02d}"
+            end_fmt = f"{int(r.end//60)}:{int(r.end%60):02d}"
+
+            row = ttk.Frame(detail_frame)
+            row.pack(fill="x", pady=2)
+
+            ttk.Label(row, text=f"#{i:02d}", width=5).pack(side="left")
+            ttk.Label(row, text=side_icon, width=8).pack(side="left")
+            ttk.Label(row, text=start_fmt, width=10).pack(side="left")
+            ttk.Label(row, text=end_fmt, width=10).pack(side="left")
+            ttk.Label(row, text=f"{dur:.1f}s", width=10).pack(side="left")
+            ttk.Label(row, text=" ".join(tags) if tags else "-", width=15).pack(side="left")
+
+        # Switch automatico alla tab Report
+        self.notebook.select(self.tab_report)
+
+    def _on_rally_double_click(self, event):
+        """Mostra dettagli rally al doppio click."""
+        selection = self.lst_rallies.curselection()
+        if selection and self.rallies:
+            idx = selection[0]
+            if idx < len(self.rallies):
+                r = self.rallies[idx]
+                dur = r.end - r.start
+                msg = (
+                    f"Rally #{idx+1}\n\n"
+                    f"Inizio: {format_time_precise(r.start)}\n"
+                    f"Fine: {format_time_precise(r.end)}\n"
+                    f"Durata: {dur:.2f}s\n"
+                    f"Lato: {r.side or 'unknown'}"
+                )
+                messagebox.showinfo(f"Rally #{idx+1}", msg)
 
     def log(self, msg: str):
+        """Scrive una riga nel log con colorazione per categoria."""
         self.txt_log.insert("end", msg + "\n")
+
+        # Applica tag colori basati sul contenuto della riga appena inserita
+        line_start = self.txt_log.index("end-2l linestart")
+        line_end = self.txt_log.index("end-1l lineend")
+
+        text_lower = msg.lower()
+        if "✅" in msg or "completat" in text_lower:
+            self.txt_log.tag_add("success", line_start, line_end)
+        elif "❌" in msg or "errore" in text_lower or "!!" in msg:
+            self.txt_log.tag_add("error", line_start, line_end)
+        elif "⚠️" in msg or "warning" in text_lower:
+            self.txt_log.tag_add("warning", line_start, line_end)
+        elif "🎯" in msg or "🏐" in msg or "🎵" in msg or "🎬" in msg:
+            self.txt_log.tag_add("agent", line_start, line_end)
+        elif "rally" in text_lower and ("dur=" in text_lower or "|" in msg):
+            self.txt_log.tag_add("rally", line_start, line_end)
+        elif "===" in msg:
+            self.txt_log.tag_add("header", line_start, line_end)
+
         self.txt_log.see("end")
         self.update_idletasks()
+
+    def _setup_log_tags(self):
+        """Configura i tag colori per il log."""
+        self.txt_log.tag_configure("success", foreground="#00ff00")
+        self.txt_log.tag_configure("error", foreground="#ff4444")
+        self.txt_log.tag_configure("warning", foreground="#ffaa00")
+        self.txt_log.tag_configure("agent", foreground="#00ccff")
+        self.txt_log.tag_configure("rally", foreground="#ffff00")
+        self.txt_log.tag_configure("header", foreground="#ff00ff", font=("Consolas", 10, "bold"))
 
     def update_progress(self, value: float, text: str = ""):
         """Aggiorna progress bar e testo."""
@@ -737,7 +1069,7 @@ class VolleyAgentsApp(ttk.Frame):
                         import traceback
                         self.log(traceback.format_exc())
                         field_calibrator = None
-                self.update_progress(75, "🏐 Ball tracking...")
+                self.update_progress(70, "🏐 Ball tracking...")
 
                 # 2. Ball Tracking
                 self.log("🏐 BallAgent: tracking palla...")
@@ -795,10 +1127,39 @@ class VolleyAgentsApp(ttk.Frame):
                     self.log(f"  !! Errore BallAgent: {e}")
                     import traceback
                     self.log(traceback.format_exc())
-                self.update_progress(85, "🧠 MasterCoach analysis...")
+                self.update_progress(75, "🎮 GameStateAgent...")
 
             except Exception as e:
                 self.log(f"  !! Errore MotionAgent: {e}")
+
+        # 3. Game State Classification
+        game_state_events = []
+        if self.var_use_game_state.get():
+            self.update_progress(80, "🎮 GameStateAgent...")
+            self.log("🎮 GameStateAgent: classificazione stato partita...")
+            try:
+                game_state_cfg = GameStateAgentConfig(
+                    window_seconds=3.0,
+                    stride_seconds=2.0,
+                    min_confidence=0.6,
+                    enable_logging=True,
+                    log_callback=self.log,
+                )
+                game_state_agent = GameStateAgent(config=game_state_cfg)
+                game_state_events = game_state_agent.run(frames, timeline=timeline)
+
+                # Conta stati
+                play_count = sum(1 for e in game_state_events if e.extra.get("state") == "play")
+                no_play_count = sum(1 for e in game_state_events if e.extra.get("state") == "no-play")
+                self.log(f"  -> {len(game_state_events)} eventi (PLAY: {play_count}, NO-PLAY: {no_play_count})")
+            except Exception as e:
+                self.log(f"  !! Errore GameStateAgent: {e}")
+                import traceback
+                self.log(traceback.format_exc())
+        else:
+            self.log("🎮 GameStateAgent: disattivato")
+
+        self.update_progress(85, "🧠 MasterCoach analysis...")
 
         # MasterCoach: analisi completa con voting multi-agente
         self.log("🧠 MasterCoach: analisi completa (voting multi-agente)...")
@@ -825,6 +1186,8 @@ class VolleyAgentsApp(ttk.Frame):
         # Usa MasterCoach per analisi completa con voting
         all_rallies = coach.analyze_game(local_tl)
 
+        self.update_progress(90, "🧠 MasterCoach: post-processing rally...")
+
         # Filtra i rally sulla finestra "vera" [t_start, t_end]
         visible_rallies: List[Rally] = []
         for r in all_rallies:
@@ -840,18 +1203,30 @@ class VolleyAgentsApp(ttk.Frame):
 
         self.log(f"  -> {len(all_rallies)} rally trovati (finestra allargata), {len(self.rallies)} visibili nella finestra [{t_start:.2f}–{t_end:.2f}s].")
         self._refresh_rally_list()
+
+        # Aggiorna tab Report
+        self._update_report_tab()
+
         self.update_progress(100, "✅ Analisi completata!")
 
     def _refresh_rally_list(self):
         self.lst_rallies.delete(0, "end")
         for i, r in enumerate(self.rallies, start=1):
             dur = r.end - r.start
-            side_str = r.side or "unknown"
+            side_str = r.side or "?"
+            side_icon = "⬅️" if side_str == "left" else "➡️" if side_str == "right" else "❓"
+
+            # Formato più leggibile con icone e tempi brevi
             label = (
-                f"{i:02d} | {format_time_precise(r.start)} → {format_time_precise(r.end)}  "
-                f"(dur {dur:.2f}s, side={side_str})"
+                f"#{i:02d}  {side_icon}  "
+                f"{format_time_short(r.start)} → {format_time_short(r.end)}  "
+                f"({dur:.1f}s)"
             )
             self.lst_rallies.insert("end", label)
+
+        # Mostra conteggio totale anche nel log
+        if self.rallies:
+            self.log(f"📊 Totale: {len(self.rallies)} rally trovati")
 
     def on_export_rallies(self):
         if not self.rallies:
@@ -944,6 +1319,65 @@ class VolleyAgentsApp(ttk.Frame):
             messagebox.showerror("Errore", f"Errore durante il salvataggio del JSON:\n{e}")
             self.log(f"❌ Errore esportazione JSON: {e}")
 
+    def _export_html_report(self):
+        """Esporta report in HTML."""
+        if not self.rallies:
+            messagebox.showwarning("Attenzione", "Nessun rally da esportare. Esegui prima un'analisi.")
+            return
+
+        from volley_agents.analysis.match_analyzer import MatchReport, RallyAnalysis, generate_html_report
+        from datetime import datetime
+
+        # Crea report
+        report = MatchReport()
+        report.video_file = Path(self.video_path.get()).name if self.video_path.get() else "Video"
+        report.video_segment = f"{self.t_start.get()} - {self.t_end.get()}"
+        report.analysis_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        report.total_rallies = len(self.rallies)
+
+        durations = []
+        for i, r in enumerate(self.rallies):
+            dur = r.end - r.start
+            durations.append(dur)
+            ra = RallyAnalysis(
+                rally_id=i + 1,
+                start=r.start,
+                end=r.end,
+                duration=dur,
+                serving_side=r.side or "unknown",
+            )
+            if dur > 15:
+                ra.tags.append("long_rally")
+            report.rallies.append(ra)
+
+            if r.side == "left":
+                report.team_left.serves += 1
+            else:
+                report.team_right.serves += 1
+
+        if durations:
+            report.total_duration = sum(durations)
+            report.avg_rally_duration = sum(durations) / len(durations)
+            report.longest_rally_duration = max(durations)
+            report.shortest_rally_duration = min(durations)
+
+        # Salva file
+        html_path = filedialog.asksaveasfilename(
+            title="Salva Report HTML",
+            defaultextension=".html",
+            filetypes=[("HTML files", "*.html")],
+        )
+        if html_path:
+            html = generate_html_report(report)
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(html)
+            messagebox.showinfo("Successo", f"Report salvato in:\n{html_path}")
+
+            # Apri nel browser
+            import webbrowser
+
+            webbrowser.open(html_path)
+
 
 # ------------------------------
 # Helper per caricare i frame
@@ -995,6 +1429,8 @@ if __name__ == "__main__":
         size=(1400, 900),
         resizable=(True, True),
     )
+    # Imposta una dimensione minima per mantenere il layout usabile
+    root.minsize(1200, 800)
     app = VolleyAgentsApp(root)
     app.pack(fill="both", expand=True)
     root.mainloop()
